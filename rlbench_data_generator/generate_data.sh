@@ -1,0 +1,1 @@
+python rlbench_data_generator/dataset_generator.py --save_path './datasets' --task 'pick_up_cup' --image_size 224 224 --renderer 'opengl' --processes 3 --episodes_per_task 3 --variations -1
