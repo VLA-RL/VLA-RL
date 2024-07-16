@@ -60,13 +60,13 @@ class RLbenchActionTokenizer:
         grip = action[-1]
 
         x_discretized = np.digitize(x, self.x_bins)
-        x_discretized = - x_discretized + self.n_bins #(-352 - -303)
+        x_discretized = - x_discretized + self.n_bins +1 #(-352 - -303)
         y_discretized = np.digitize(y, self.y_bins)
-        y_discretized = - y_discretized + self.n_bins - self.x_num_bins # (-302 - -203)
+        y_discretized = - y_discretized + self.n_bins - self.x_num_bins +1 # (-302 - -203)
         z_discretized = np.digitize(z, self.z_bins)
-        z_discretized = - z_discretized + self.n_bins - self.x_num_bins - self.y_num_bins # (-202 - -103)
+        z_discretized = - z_discretized + self.n_bins - self.x_num_bins - self.y_num_bins +1# (-202 - -103)
         rot_discretized = np.digitize(rot, self.rot_bins)
-        rot_discretized = - rot_discretized + self.grip_num_bins + self.rot_num_bins# (-102 - -3)
+        rot_discretized = - rot_discretized + self.grip_num_bins + self.rot_num_bins+1# (-102 - -3)
         grip_discretized = int(2 - grip) # (-2 - -1)
 
         discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized], rot_discretized, [grip_discretized]])
@@ -129,10 +129,10 @@ class RLbenchActionTokenizer:
             rot_pred = F.softmax(rot_score, dim = 1) @ torch.tensor(self.rot_bin_centers, dtype=torch.float32).to(device)
             grip_pred = F.softmax(grip_score) @ torch.tensor([0,1], dtype=torch.float32).to(device)
         else:
-            x_pred = self.x_bin_centers[torch.argmax(x_score)]
-            y_pred = self.y_bin_centers[torch.argmax(y_score)]
-            z_pred = self.z_bin_centers[torch.argmax(z_score)]
-            rot_pred = self.rot_bin_centers[torch.argmax(rot_score)]
+            x_pred = torch.tensor(self.x_bin_centers, dtype=torch.float32).to(device)[torch.argmax(x_score)]
+            y_pred = torch.tensor(self.y_bin_centers, dtype=torch.float32).to(device)[torch.argmax(y_score)]
+            z_pred = torch.tensor(self.z_bin_centers, dtype=torch.float32).to(device)[torch.argmax(z_score)]
+            rot_pred = torch.tensor(self.rot_bin_centers, dtype=torch.float32).to(device)[torch.argmax(rot_score,dim = 1)]
             grip_pred = torch.argmax(grip_score)
 
         pred_action = torch.cat([x_pred.unsqueeze(0), y_pred.unsqueeze(0), z_pred.unsqueeze(0), rot_pred, grip_pred.unsqueeze(0)]).to(device)

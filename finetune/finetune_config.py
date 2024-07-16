@@ -10,20 +10,21 @@ class FinetuneConfig:
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-7b-4b-wo-projector"   # Path to OpenVLA model
 
 
-    dataset_name: str = "test2"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
-    data_path: Path = Path("./datasets/data.pt")
-    train_data_path: Path = Path("./datasets/train_data.pt")
-    test_data_path: Path = Path("./datasets/test_data.pt")
-    valid_data_path: Path = Path("./datasets/valid_data.pt")
+    dataset_name: str = "pick_up_cup"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+    data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
+    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
+    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data.pt")
+    valid_data_path: Path = Path(f"./datasets/{dataset_name}/valid_data.pt")
     run_root_dir: Path = Path("./runs")                               # Path to directory to store logs & checkpoints
     adapter_dir: Path = Path("./adapter-tmp")                     # Temporary directory for LoRA weights before fusing
 
     # Fine-tuning Parameters
-    episode: int = 2
+    episode: int = 4
     batch_size: int = 2#16                                            # Fine-tuning batch size
     save_steps: int = 10#5000                                          # Interval for checkpoint saving
     learning_rate: float = 2e-5                                     # Fine-tuning learning rate
-    grad_accumulation_steps: int = 8                                # Gradient accumulation steps
+    weight_decay: float = 0.01                                       # Fine-tuning weight decay
+    grad_accumulation_steps: int = 4                                # Gradient accumulation steps
     image_aug: bool = True                                          # Whether to train with image augmentations
     shuffle_buffer_size: int = 100#100_000                              # Dataloader shuffle buffer size (can reduce if OOM)
 

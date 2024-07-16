@@ -38,6 +38,7 @@ from accelerate import PartialState
 from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -116,13 +117,31 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Create Optimizer =>> note that we default to a simple constant learning rate!
     trainable_params = [param for param in vla.parameters() if param.requires_grad]
-    optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
+    optimizer = AdamW(trainable_params, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
+    scheduler = StepLR(optimizer, step_size=5, gamma=0.9)
+    
 
     # Create Action Tokenizer
     action_tokenizer = RLbenchActionTokenizer(processor.tokenizer)
 
-    vla_dataset = RLbenchDataset(
-        cfg.data_path,
+    trainset = RLbenchDataset(
+        cfg.train_data_path,
+        action_tokenizer,
+        processor.tokenizer,
+        image_transform=processor.image_processor.apply_transform,
+        prompt_builder_fn=PurePromptBuilder,
+    )
+
+    validset = RLbenchDataset(
+        cfg.valid_data_path,
+        action_tokenizer,
+        processor.tokenizer,
+        image_transform=processor.image_processor.apply_transform,
+        prompt_builder_fn=PurePromptBuilder,
+    )
+
+    testset = RLbenchDataset(
+        cfg.test_data_path,
         action_tokenizer,
         processor.tokenizer,
         image_transform=processor.image_processor.apply_transform,
@@ -130,15 +149,29 @@ def finetune(cfg: FinetuneConfig) -> None:
     )
 
     # [Important] Save Dataset Statistics =>> used to de-normalize actions for inference!
-    if distributed_state.is_main_process:
-        save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
+    # if distributed_state.is_main_process:
+    #     save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
 
     # Create Collator and DataLoader
     collator = PaddedCollatorForActionPrediction(
         processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
     )
-    dataloader = DataLoader(
-        vla_dataset,
+    train_dataloader = DataLoader(
+        trainset,
+        batch_size=cfg.batch_size,
+        sampler=None,
+        collate_fn=collator,
+        num_workers=2,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
+    )
+    valid_dataloader = DataLoader(
+        validset,
+        batch_size=cfg.batch_size,
+        sampler=None,
+        collate_fn=collator,
+        num_workers=2,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
+    )
+    test_dataloader = DataLoader(
+        testset,
         batch_size=cfg.batch_size,
         sampler=None,
         collate_fn=collator,
@@ -152,11 +185,11 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Train!
     for epoch in range(cfg.episode):
         print(f"Starting Epoch {epoch + 1} of {cfg.episode}")
-        with tqdm.tqdm(total=dataloader.__len__() , leave=False) as progress:
-            vla.train()
+        with tqdm.tqdm(total=train_dataloader.__len__() , leave=False) as progress:
             optimizer.zero_grad()
             batch_loss = 0
-            for step_idx, batch in enumerate(dataloader):
+            for step_idx, batch in enumerate(train_dataloader):
+                vla.train()
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     output: CausalLMOutputWithPast = vla(
                         input_ids=batch["input_ids"].to(device_id),
@@ -166,8 +199,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                     )
                     loss = output.loss
 
-                # Backward!
-                # loss.backward()
                 
                 # Compute Accuracy and L1 Loss for Logging
                 action_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches:-1]
@@ -188,11 +219,11 @@ def finetune(cfg: FinetuneConfig) -> None:
                 # Push Metrics to W&B (every 10 steps)
                 if distributed_state.is_main_process and step_idx % 10 == 0:
                     wandb.log(
-                        {"nll_loss": loss, "l1_loss": action_l1_loss, "total_loss": total_loss}, step= step_idx + epoch * dataloader.__len__()
+                        {"nll_loss": loss, "l1_loss": action_l1_loss, "total_loss": total_loss}, step= step_idx + epoch * train_dataloader.__len__()
                     )
 
                 # Optimizer Step
-                if (step_idx + 1) % cfg.grad_accumulation_steps == 0 or step_idx == dataloader.__len__():
+                if (step_idx + 1) % cfg.grad_accumulation_steps == 0 or step_idx == train_dataloader.__len__():
                     optimizer.step()
                     optimizer.zero_grad()
 
@@ -212,7 +243,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
                     # Block on Main Process Checkpointing
                     # dist.barrier()
-
+            scheduler.step()
 
 if __name__ == "__main__":
     cfg = FinetuneConfig()

@@ -139,14 +139,12 @@ python rlbench_data_generator/data_processing.py
 ### Finetuning
 
 #### TODO list
-- [x] debug optimizer
 - [x] ActionTokenizer (trans, sin(theta) rotation)
 - [x] argmax is not differentiable, change to softmax @ decode
 - [x] accumulation steps
-- [ ] Split trans, Rotation, grip loss
 - [ ] train, test, valid split
+- [ ] Split trans, Rotation, grip loss
 - [ ] chain of thought
-- [ ] reduce the neg affact from the small batch size
 - [ ] RL 
 
 ### Experiments
