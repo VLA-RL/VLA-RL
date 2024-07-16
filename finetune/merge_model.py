@@ -15,13 +15,13 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Merge adapter with base model")
     parser.add_argument('--base_model_path', type=str, default=cfg.vla_path)
     parser.add_argument('--adapter_path', type=str, default=cfg.adapter_dir)
-    parser.add_argument('--output_path', type=str, default=f"{cfg.vla_path}/adapter-merged")
+    parser.add_argument('--output_path', type=str, default=f"{cfg.vla_path}/adapter-merged1")
     return parser.parse_args()
 
 def main():
     args = parse_args()
     base_model_path = args.base_model_path
-    adapter_path = "adapter-tmp/openvla-7b+test1+b2+lr-2e-05+lora-r4+dropout-0.0+q-4bit"
+    adapter_path = "adapter-tmp/openvla-7b+test1+b10+lr-2e-05+lora-r8+dropout-0.0+q-4bit"
     output_path = args.output_path
     merge_model(base_model_path, adapter_path, output_path)
 

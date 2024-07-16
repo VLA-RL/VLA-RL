@@ -141,7 +141,7 @@ python rlbench_data_generator/data_processing.py
 #### TODO list
 - [x] debug optimizer
 - [x] ActionTokenizer (trans, sin(theta) rotation)
-- [x] argmax is not differatiable, change to softmax @ decode
+- [x] argmax is not differentiable, change to softmax @ decode
 - [x] accumulation steps
 - [ ] Split trans, Rotation, grip loss
 - [ ] train, test, valid split
@@ -153,10 +153,11 @@ python rlbench_data_generator/data_processing.py
 
 1. single task vs multi tasks
 2. accumulation steps
+3. different quantization config
+4. chain of thought
+5. few shot rl (num of demo)
 
 #### Abalation Expoeriments
-
-1. quantization
 
 
 

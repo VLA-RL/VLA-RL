@@ -65,6 +65,9 @@ class RLbenchDataset(Dataset):
         input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
         pixel_values = self.image_transform(image)
 
+
+        # TODO:Check if this is correct
+        # input_ids[- (len(action) + 1):] = 32000
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
         labels[: -(len(action) + 1)] = IGNORE_INDEX
 

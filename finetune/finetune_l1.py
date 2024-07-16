@@ -60,7 +60,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Configure Unique Experiment ID & Log Directory
     exp_id = (
-        f"{cfg.vla_path.split('/')[-1]}+{cfg.dataset_name}"
+        f"{cfg.vla_path.split('/')[-1]}+{cfg.dataset_name}+e{cfg.episode}"
         f"+b{cfg.batch_size * cfg.grad_accumulation_steps}"
         f"+lr-{cfg.learning_rate}"
     )
@@ -142,7 +142,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         batch_size=cfg.batch_size,
         sampler=None,
         collate_fn=collator,
-        num_workers=0,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
+        num_workers=2,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
 
     # Initialize Logging =>> W&B
@@ -157,7 +157,6 @@ def finetune(cfg: FinetuneConfig) -> None:
             optimizer.zero_grad()
             batch_loss = 0
             for step_idx, batch in enumerate(dataloader):
-                step_idx = step_idx + epoch * dataloader.__len__()
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     output: CausalLMOutputWithPast = vla(
                         input_ids=batch["input_ids"].to(device_id),
@@ -169,19 +168,19 @@ def finetune(cfg: FinetuneConfig) -> None:
 
                 # Backward!
                 # loss.backward()
-
+                
                 # Compute Accuracy and L1 Loss for Logging
-                action_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches : -1]
+                action_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches:-1]
                 action_gt = batch["labels"][:, 1:].to("cuda")
-                mask = action_gt > action_tokenizer.action_token_begin_idx
-                masked_logits = action_logits[mask][:,action_tokenizer.action_token_begin_idx+1:processor.tokenizer.vocab_size].view(2,7,-1)
+                mask = action_gt >= action_tokenizer.action_token_begin_idx
+                masked_logits = action_logits[mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(2,7,-1)
 
                 # Compute L1 Loss on Predicted (Continuous) Actions
                 action_pred = action_tokenizer.output_logit_to_continous_action(masked_logits)
                 action_gt = batch["actions"].to("cuda")
                 action_l1_loss = torch.nn.functional.l1_loss(action_pred, action_gt)
 
-                total_loss = (0.2*loss + 0.8*action_l1_loss)/cfg.grad_accumulation_steps
+                total_loss = (0.5*loss + 0.5*action_l1_loss)/cfg.grad_accumulation_steps
                 total_loss.backward()
 
                 batch_loss += total_loss.item()
@@ -189,14 +188,15 @@ def finetune(cfg: FinetuneConfig) -> None:
                 # Push Metrics to W&B (every 10 steps)
                 if distributed_state.is_main_process and step_idx % 10 == 0:
                     wandb.log(
-                        {"train_loss": loss, "l1_loss": action_l1_loss, "total_loss": total_loss}, step=step_idx
+                        {"nll_loss": loss, "l1_loss": action_l1_loss, "total_loss": total_loss}, step= step_idx + epoch * dataloader.__len__()
                     )
 
                 # Optimizer Step
-                if (step_idx + 1) % cfg.grad_accumulation_steps == 0:
+                if (step_idx + 1) % cfg.grad_accumulation_steps == 0 or step_idx == dataloader.__len__():
                     optimizer.step()
                     optimizer.zero_grad()
-                    progress.update()
+
+                progress.update()
 
                 # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
                 if step_idx > 0 and step_idx % cfg.save_steps == 0:
@@ -211,7 +211,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                         vla.save_pretrained(save_dir)
 
                     # Block on Main Process Checkpointing
-                    dist.barrier()
+                    # dist.barrier()
 
 
 if __name__ == "__main__":
