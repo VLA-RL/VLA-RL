@@ -260,8 +260,8 @@ def finetune(cfg: FinetuneConfig) -> None:
                             valid_nll_loss.append(valid_nll_loss_)
                             valid_l2_loss.append(valid_l2_loss_)
                     valid_nll_loss = torch.stack(valid_nll_loss).mean()
-                    valid_l1_loss = torch.stack(valid_l1_loss).mean()
-                    valid_loss = (0.5*valid_nll_loss + 0.5*valid_l1_loss)
+                    valid_l2_loss = torch.stack(valid_l2_loss).mean()
+                    valid_loss = (0.5*valid_nll_loss + 0.5*valid_l2_loss)
                     wandb.log({"valid_nll_loss":valid_nll_loss, "valid_l2_loss":valid_l2_loss, "valid_loss":valid_loss}, step = total_step)
                     if best_valid_loss > valid_loss:
                         print(f"Saving Model Checkpoint for Step {total_step}")
