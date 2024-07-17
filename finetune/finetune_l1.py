@@ -52,6 +52,7 @@ from vla.dataset import save_dataset_statistics, RLbenchDataset
 @draccus.wrap()
 def finetune(cfg: FinetuneConfig) -> None:
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
+    torch.manual_seed(cfg.seed)
 
     # [Validate] Ensure GPU Available & Set Device / Distributed Context
     assert torch.cuda.is_available(), "Fine-tuning assumes at least one GPU is available!"
@@ -183,11 +184,13 @@ def finetune(cfg: FinetuneConfig) -> None:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{exp_id}")
 
     # Train!
+    best_valid_loss = float("inf")
     for epoch in range(cfg.episode):
         print(f"Starting Epoch {epoch + 1} of {cfg.episode}")
         with tqdm.tqdm(total=train_dataloader.__len__() , leave=False) as progress:
             optimizer.zero_grad()
             for step_idx, batch in enumerate(train_dataloader):
+                total_step = step_idx + epoch * train_dataloader.__len__()
                 vla.train()
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     output: CausalLMOutputWithPast = vla(
@@ -209,13 +212,27 @@ def finetune(cfg: FinetuneConfig) -> None:
                 action_gt = batch["actions"].to(device_id)
                 train_l1_loss = torch.nn.functional.l1_loss(action_pred, action_gt)
 
-                train_loss = (0.5*train_nll_loss + 0.5*train_l1_loss)/cfg.grad_accumulation_steps
+                train_loss = (0.5*train_nll_loss + 0.5*train_l1_loss)
                 train_loss.backward()
 
                 # batch_loss += train_loss.item()
 
                 # Push Metrics to W&B (every 10 steps)
                 if distributed_state.is_main_process and step_idx % 10 == 0:
+
+                    wandb.log(
+                        {"train_nll_loss": train_nll_loss, "train_l1_loss": train_l1_loss, "train_loss": train_loss}, step = total_step
+                    )
+
+                # Optimizer Step
+                if (total_step + 1) % cfg.grad_accumulation_steps == 0 or step_idx == train_dataloader.__len__():
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                progress.update()
+
+                # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
+                if step_idx > 0 and total_step % cfg.save_steps == 0:
                     ##Validation
                     vla.eval()
                     valid_nll_loss = []
@@ -243,31 +260,16 @@ def finetune(cfg: FinetuneConfig) -> None:
                             valid_l1_loss.append(valid_l1_loss_)
                     valid_nll_loss = torch.stack(valid_nll_loss).mean()
                     valid_l1_loss = torch.stack(valid_l1_loss).mean()
-
-                    wandb.log(
-                        {"train_nll_loss": train_nll_loss, "train_l1_loss": train_l1_loss, "train_loss": train_loss,
-                         "valid_nll_loss":valid_nll_loss, "valid_l1_loss":valid_l1_loss}, step= step_idx + epoch * train_dataloader.__len__()
-                    )
-
-                # Optimizer Step
-                if (step_idx + 1) % cfg.grad_accumulation_steps == 0 or step_idx == train_dataloader.__len__():
-                    optimizer.step()
-                    optimizer.zero_grad()
-
-                progress.update()
-
-                # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
-                if step_idx > 0 and step_idx % cfg.save_steps == 0:
-                    if distributed_state.is_main_process:
-                        print(f"Saving Model Checkpoint for Step {step_idx}")
-
-                        # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
+                    valid_loss = (0.5*valid_nll_loss + 0.5*valid_l1_loss)
+                    wandb.log({"valid_nll_loss":valid_nll_loss, "valid_l1_loss":valid_l1_loss, "valid_loss":valid_loss}, step = total_step)
+                    if best_valid_loss > valid_loss:
+                        print(f"Saving Model Checkpoint for Step {total_step}")
+                        best_valid_loss = valid_loss
                         save_dir = adapter_dir if cfg.use_lora else run_dir
-
                         # Save Processor & Weights
                         processor.save_pretrained(run_dir)
                         vla.save_pretrained(save_dir)
-
+                    
                     # Block on Main Process Checkpointing
                     # dist.barrier()
             scheduler.step()

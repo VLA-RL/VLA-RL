@@ -146,7 +146,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_l1.py
 - [x] ActionTokenizer (trans, sin(theta) rotation)
 - [x] argmax is not differentiable, change to softmax @ decode
 - [x] accumulation steps
-- [ ] train, test, valid split
+- [x] train, test, valid split
 - [ ] Split trans, Rotation, grip loss
 - [ ] chain of thought
 - [ ] RL 

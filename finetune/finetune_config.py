@@ -19,14 +19,13 @@ class FinetuneConfig:
     adapter_dir: Path = Path("./adapter-tmp")                     # Temporary directory for LoRA weights before fusing
 
     # Fine-tuning Parameters
-    episode: int = 1
+    seed: int = 42                                                  # Random seed
+    episode: int = 5
     batch_size: int = 2#16                                            # Fine-tuning batch size
-    save_steps: int = 10#5000                                          # Interval for checkpoint saving
+    save_steps: int = 20#5000                                          # Interval for checkpoint saving
     learning_rate: float = 2e-5                                     # Fine-tuning learning rate
     weight_decay: float = 0.01                                       # Fine-tuning weight decay
     grad_accumulation_steps: int = 4                                # Gradient accumulation steps
-    image_aug: bool = True                                          # Whether to train with image augmentations
-    shuffle_buffer_size: int = 100#100_000                              # Dataloader shuffle buffer size (can reduce if OOM)
 
     # LoRA Arguments
     use_lora: bool = True                                           # Whether to use LoRA fine-tuning
