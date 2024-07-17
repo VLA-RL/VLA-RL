@@ -187,7 +187,6 @@ def finetune(cfg: FinetuneConfig) -> None:
         print(f"Starting Epoch {epoch + 1} of {cfg.episode}")
         with tqdm.tqdm(total=train_dataloader.__len__() , leave=False) as progress:
             optimizer.zero_grad()
-            batch_loss = 0
             for step_idx, batch in enumerate(train_dataloader):
                 vla.train()
                 with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -197,29 +196,57 @@ def finetune(cfg: FinetuneConfig) -> None:
                         pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
                         labels=batch["labels"],
                     )
-                    loss = output.loss
-
+                    train_nll_loss = output.loss
                 
                 # Compute Accuracy and L1 Loss for Logging
                 action_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches:-1]
-                action_gt = batch["labels"][:, 1:].to("cuda")
+                action_gt = batch["labels"][:, 1:].to(device_id)
                 mask = action_gt >= action_tokenizer.action_token_begin_idx
                 masked_logits = action_logits[mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(2,7,-1)
 
                 # Compute L1 Loss on Predicted (Continuous) Actions
                 action_pred = action_tokenizer.output_logit_to_continous_action(masked_logits)
-                action_gt = batch["actions"].to("cuda")
-                action_l1_loss = torch.nn.functional.l1_loss(action_pred, action_gt)
+                action_gt = batch["actions"].to(device_id)
+                train_l1_loss = torch.nn.functional.l1_loss(action_pred, action_gt)
 
-                total_loss = (0.5*loss + 0.5*action_l1_loss)/cfg.grad_accumulation_steps
-                total_loss.backward()
+                train_loss = (0.5*train_nll_loss + 0.5*train_l1_loss)/cfg.grad_accumulation_steps
+                train_loss.backward()
 
-                batch_loss += total_loss.item()
+                # batch_loss += train_loss.item()
 
                 # Push Metrics to W&B (every 10 steps)
                 if distributed_state.is_main_process and step_idx % 10 == 0:
+                    ##Validation
+                    vla.eval()
+                    valid_nll_loss = []
+                    valid_l1_loss = []
+                    for batch in valid_dataloader:
+                        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+                            output: CausalLMOutputWithPast = vla(
+                                input_ids=batch["input_ids"].to(device_id),
+                                attention_mask=batch["attention_mask"].to(device_id),
+                                pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
+                                labels=batch["labels"],
+                            )
+                            valid_nll_loss_ = output.loss
+
+                            action_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches:-1]
+                            action_gt = batch["labels"][:, 1:].to(device_id)
+                            mask = action_gt >= action_tokenizer.action_token_begin_idx
+                            masked_logits = action_logits[mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(action_logits.shape[0],7,-1)
+
+                            # Compute L1 Loss on Predicted (Continuous) Actions
+                            action_pred = action_tokenizer.output_logit_to_continous_action(masked_logits)
+                            action_gt = batch["actions"].to(device_id)
+                            valid_l1_loss_ = torch.nn.functional.l1_loss(action_pred, action_gt)
+                            valid_nll_loss.append(valid_nll_loss_)
+                            valid_l1_loss.append(valid_l1_loss_)
+                    valid_nll_loss = torch.stack(valid_nll_loss).mean()
+                    valid_l1_loss = torch.stack(valid_l1_loss).mean()
+
                     wandb.log(
-                        {"nll_loss": loss, "l1_loss": action_l1_loss, "total_loss": total_loss}, step= step_idx + epoch * train_dataloader.__len__()
+                        {"train_nll_loss": train_nll_loss, "train_l1_loss": train_l1_loss, "train_loss": train_loss,
+                         "valid_nll_loss":valid_nll_loss, "valid_l1_loss":valid_l1_loss}, step= step_idx + epoch * train_dataloader.__len__()
                     )
 
                 # Optimizer Step

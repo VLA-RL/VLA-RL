@@ -74,4 +74,4 @@ for i, indice in enumerate([train_indice, test_indice, valid_indice]):
                     actions.append(action)
 
     data = {'image_paths': image_paths, 'language_instructions': language_instructions, 'cur_poses': cur_poses, 'actions': actions}
-    torch.save(data, os.path.join(dataset_root, f'{names[i]}_data.pt'))
+    torch.save(data, os.path.join(dataset_root, f'{task_name}/{names[i]}_data.pt'))

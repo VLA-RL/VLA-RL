@@ -19,7 +19,7 @@ class FinetuneConfig:
     adapter_dir: Path = Path("./adapter-tmp")                     # Temporary directory for LoRA weights before fusing
 
     # Fine-tuning Parameters
-    episode: int = 4
+    episode: int = 1
     batch_size: int = 2#16                                            # Fine-tuning batch size
     save_steps: int = 10#5000                                          # Interval for checkpoint saving
     learning_rate: float = 2e-5                                     # Fine-tuning learning rate

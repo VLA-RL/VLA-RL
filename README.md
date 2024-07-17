@@ -138,6 +138,10 @@ python rlbench_data_generator/data_processing.py
 
 ### Finetuning
 
+```bash
+torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_l1.py
+```
+
 #### TODO list
 - [x] ActionTokenizer (trans, sin(theta) rotation)
 - [x] argmax is not differentiable, change to softmax @ decode

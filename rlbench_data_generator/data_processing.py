@@ -61,4 +61,4 @@ for task_name in task_names:
                 actions.append(action)
 
 data = {'image_paths': image_paths, 'language_instructions': language_instructions, 'cur_poses': cur_poses, 'actions': actions}
-torch.save(data, os.path.join(dataset_root, 'data.pt'))
+torch.save(data, os.path.join(dataset_root, f'{task_name}/data.pt'))
