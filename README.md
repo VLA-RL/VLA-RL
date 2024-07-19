@@ -69,18 +69,18 @@ If you encounter errors, please use the [PyRep issue tracker](https://github.com
 
 #### 3. RLBench
 
-<!-- VLA-RL uses my [RLBench fork](https://github.com/VLA-RL/RLBench/tree/VLA-RL). 
+VLA-RL uses my [RLBench fork](https://github.com/VLA-RL/RLBench/tree/VLA-RL). 
 
 ```bash
 cd <install_dir>
 git clone -b VLA-RL https://github.com/VLA-RL/RLBench.git # note: 'VLA-RL' branch
 
 cd RLBench
-pip install -r requirements.txt
+# pip install -r requirements.txt
 python setup.py develop
 ```
 
-For [running in headless mode](https://github.com/MohitShridhar/RLBench/tree/peract#running-headless), tasks setups, and other issues, please refer to the [official repo](https://github.com/stepjam/RLBench). -->
+For [running in headless mode](https://github.com/MohitShridhar/RLBench/tree/peract#running-headless), tasks setups, and other issues, please refer to the [official repo](https://github.com/stepjam/RLBench).
 
 ### VLA-RL Repo
 Clone:
@@ -165,6 +165,15 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_l1.py
 
 
 ## Citations 
+
+<!-- **Embodied Chain-of-Thought** -->
+
+ <!-- @article{Zawalski24-ecot,
+    title={Robotic Control via Embodied Chain-of-Thought Reasoning},
+    author={Michał Zawalski and William Chen and Karl Pertsch and Oier Mees and Chelsea Finn and Sergey Levine},
+    journal={arXiv preprint arXiv:2407.08693},
+    year={2024}
+}  -->
 
 <!-- **OpenVLA**
 ```

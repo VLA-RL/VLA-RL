@@ -213,7 +213,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 action_gt = batch["actions"].to(device_id)
                 train_l2_loss = torch.nn.functional.mse_loss(action_pred, action_gt)
 
-                train_loss = (0.5*train_nll_loss + 0.5*train_l2_loss)
+                train_loss = (0.2*train_nll_loss + 0.8*train_l2_loss)/cfg.grad_accumulation_steps
                 train_loss.backward()
 
                 # batch_loss += train_loss.item()
@@ -229,8 +229,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                 if (total_step + 1) % cfg.grad_accumulation_steps == 0 or step_idx == train_dataloader.__len__():
                     optimizer.step()
                     optimizer.zero_grad()
-
-                progress.update()
 
                 # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
                 if step_idx > 0 and total_step % cfg.save_steps == 0:
@@ -261,7 +259,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                             valid_l2_loss.append(valid_l2_loss_)
                     valid_nll_loss = torch.stack(valid_nll_loss).mean()
                     valid_l2_loss = torch.stack(valid_l2_loss).mean()
-                    valid_loss = (0.5*valid_nll_loss + 0.5*valid_l2_loss)
+                    valid_loss = (0.2*valid_nll_loss + 0.8*valid_l2_loss)
                     wandb.log({"valid_nll_loss":valid_nll_loss, "valid_l2_loss":valid_l2_loss, "valid_loss":valid_loss}, step = total_step)
                     if best_valid_loss > valid_loss:
                         print(f"Saving Model Checkpoint for Step {total_step}")
@@ -273,6 +271,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                     
                     # Block on Main Process Checkpointing
                     # dist.barrier()
+                progress.update()
             scheduler.step()
 
 if __name__ == "__main__":
