@@ -15,36 +15,54 @@ import torch.nn.functional as F
 
 class RLbenchPoseTokenizer:
     def __init__(
-            self, tokenizer: PreTrainedTokenizerBase
+            self, tokenizer: PreTrainedTokenizerBase, dataset_statistics: tuple
     ) -> None:
         self.tokenizer = tokenizer
+        lower_bound, upper_bound = dataset_statistics
         eps = 1e-8
         # Transmit X 0-0.5, Y -0.5-0.5, Z 0.5-1.5
-        self.x_min = -0.5
-        self.x_max = 0.5 - eps
+        self.x_min = lower_bound[0]
+        self.x_max = upper_bound[0] - eps
         self.x_num_bins = 100
         self.x_bins = np.linspace(self.x_min, self.x_max, self.x_num_bins+1)
         self.x_bin_centers = (self.x_bins[:-1] + self.x_bins[1:]) / 2.0
-        self.y_min = -0.5
-        self.y_max = 0.5 - eps
+        self.y_min = lower_bound[1]
+        self.y_max = upper_bound[1] - eps
         self.y_num_bins = 100
         self.y_bins = np.linspace(self.y_min, self.y_max, self.y_num_bins+1)
         self.y_bin_centers = (self.y_bins[:-1] + self.y_bins[1:]) / 2.0
-        self.z_min = 0.5
-        self.z_max = 1.5 - eps
+        self.z_min = lower_bound[2]
+        self.z_max = upper_bound[2] - eps
         self.z_num_bins = 100
         self.z_bins = np.linspace(self.z_min, self.z_max, self.z_num_bins+1)
         self.z_bin_centers = (self.z_bins[:-1] + self.z_bins[1:]) / 2.0
         #Rotation -pi theta
-        self.rot_min = -np.pi
-        self.rot_max = np.pi - eps
-        self.rot_num_bins = 100
-        self.rot_bins = np.linspace(self.rot_min, self.rot_max, self.rot_num_bins+1)
-        self.rot_bin_centers = (self.rot_bins[:-1] + self.rot_bins[1:]) / 2.0
+
+        self.rx_min = lower_bound[3]
+        self.rx_max = upper_bound[3] - eps
+        self.rx_num_bins = 100
+        self.rx_bins = np.linspace(self.rx_min, self.rx_max, self.rx_num_bins+1)
+        self.rx_bin_centers = (self.rx_bins[:-1] + self.rx_bins[1:]) / 2.0
+        self.ry_min = lower_bound[4]
+        self.ry_max = upper_bound[4] - eps
+        self.ry_num_bins = 100
+        self.ry_bins = np.linspace(self.ry_min, self.ry_max, self.ry_num_bins+1)
+        self.ry_bin_centers = (self.ry_bins[:-1] + self.ry_bins[1:]) / 2.0
+        self.rz_min = lower_bound[5]
+        self.rz_max = upper_bound[5] - eps
+        self.rz_num_bins = 100
+        self.rz_bins = np.linspace(self.rz_min, self.rz_max, self.rz_num_bins+1)
+        self.rz_bin_centers = (self.rz_bins[:-1] + self.rz_bins[1:]) / 2.0
+
+        # self.rot_min = -np.pi
+        # self.rot_max = np.pi - eps
+        # self.rot_num_bins = 100
+        # self.rot_bins = np.linspace(self.rot_min, self.rot_max, self.rot_num_bins+1)
+        # self.rot_bin_centers = (self.rot_bins[:-1] + self.rot_bins[1:]) / 2.0
         
         #gripper 0, 1
         self.grip_num_bins = 2
-        self.n_bins = self.x_num_bins + self.y_num_bins + self.z_num_bins + self.rot_num_bins + self.grip_num_bins
+        self.n_bins = self.x_num_bins + self.y_num_bins + self.z_num_bins + self.rx_num_bins + self.ry_num_bins + self.rz_num_bins + self.grip_num_bins
         self.action_token_begin_idx: int = int(self.tokenizer.vocab_size - self.n_bins)#-352 #+1?
 
     def __call__(self, action: np.ndarray) -> Union[str, List[str]]:
@@ -58,15 +76,32 @@ class RLbenchPoseTokenizer:
         y_discretized = - y_discretized + self.n_bins - self.x_num_bins +1 # (-302 - -203)
         z_discretized = np.digitize(z, self.z_bins)
         z_discretized = - z_discretized + self.n_bins - self.x_num_bins - self.y_num_bins +1# (-202 - -103)
-        rot = np.clip(action[3:6], a_min=self.rot_min, a_max=self.rot_max-eps)
-        rot_discretized = np.digitize(rot, self.rot_bins)
-        rot_discretized = - rot_discretized + self.grip_num_bins + self.rot_num_bins+1# (-102 - -3)
-        if len(action) == 7:
-            grip = action[-1]
-            grip_discretized = int(2 - grip) # (-2 - -1)
-            discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized], rot_discretized, [grip_discretized]])
-        else:
-            discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized], rot_discretized])
+        discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized]])
+        if len(action) != 3:
+            rx = np.clip(action[3], a_min=self.rx_min, a_max=self.rx_max-eps)
+            rx_discretized = np.digitize(rx, self.rx_bins)
+            rx_discretized = - rx_discretized + self.n_bins - self.x_num_bins - self.y_num_bins - self.z_num_bins +1
+            ry = np.clip(action[4], a_min=self.ry_min, a_max=self.ry_max-eps)
+            ry_discretized = np.digitize(ry, self.ry_bins)
+            ry_discretized = - ry_discretized + self.n_bins - self.x_num_bins - self.y_num_bins - self.z_num_bins - self.rx_num_bins +1
+            rz = np.clip(action[5], a_min=self.rz_min, a_max=self.rz_max-eps)
+            rz_discretized = np.digitize(rz, self.rz_bins)
+            rz_discretized = - rz_discretized + self.n_bins - self.x_num_bins - self.y_num_bins - self.z_num_bins - self.rx_num_bins - self.ry_num_bins +1
+            discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized, rx_discretized, ry_discretized, rz_discretized]])
+            if len(action) == 7:
+                grip = action[-1]
+                grip_discretized = int(2 - grip)
+                discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized, rx_discretized, ry_discretized, rz_discretized, grip_discretized]])
+
+        # rot = np.clip(action[3:6], a_min=self.rot_min, a_max=self.rot_max-eps)
+        # rot_discretized = np.digitize(rot, self.rot_bins)
+        # rot_discretized = - rot_discretized + self.grip_num_bins + self.rot_num_bins+1# (-102 - -3)
+        # if len(action) == 7:
+        #     grip = action[-1]
+        #     grip_discretized = int(2 - grip) # (-2 - -1)
+        #     discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized], rot_discretized, [grip_discretized]])
+        # else:
+        #     discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized], rot_discretized])
         
         vocabulary_list = (self.tokenizer.vocab_size - discretized_actions)
         # return self.tokenizer.batch_decode(vocabulary_list)
@@ -75,42 +110,16 @@ class RLbenchPoseTokenizer:
             return self.tokenizer.decode(list(vocabulary_list))
         else:
             return self.tokenizer.batch_decode(vocabulary_list.tolist())
-
-    def poseDecoder(self, logits: torch.tensor, soft: bool = False) -> np.ndarray: 
-        device = logits.device
-        x_score = logits[0,:100]
-        y_score = logits[1,100:200]
-        z_score = logits[2,200:300]
-        rot_score = logits[3:6,300:400]
-        if logits.shape[1] == 7:
-            grip_score = logits[-1,400:]
-        if soft:
-            x_pred = F.softmax(x_score) @ torch.tensor(self.x_bin_centers, dtype=torch.float32).to(device)
-            y_pred = F.softmax(y_score) @ torch.tensor(self.y_bin_centers, dtype=torch.float32).to(device)
-            z_pred = F.softmax(z_score) @ torch.tensor(self.z_bin_centers, dtype=torch.float32).to(device)
-            rot_pred = F.softmax(rot_score, dim = 1) @ torch.tensor(self.rot_bin_centers, dtype=torch.float32).to(device)
-            if logits.shape[1] == 7:
-                grip_pred = F.softmax(grip_score) @ torch.tensor([0,1], dtype=torch.float32).to(device)
-        else:
-            x_pred = torch.tensor(self.x_bin_centers, dtype=torch.float32).to(device)[torch.argmax(x_score)]
-            y_pred = torch.tensor(self.y_bin_centers, dtype=torch.float32).to(device)[torch.argmax(y_score)]
-            z_pred = torch.tensor(self.z_bin_centers, dtype=torch.float32).to(device)[torch.argmax(z_score)]
-            rot_pred = torch.tensor(self.rot_bin_centers, dtype=torch.float32).to(device)[torch.argmax(rot_score,dim = 1)]
-            if logits.shape[1] == 7:
-                grip_pred = torch.argmax(grip_score)
-        if logits.shape[1] == 7:
-            pred_action = torch.cat([x_pred.unsqueeze(0), y_pred.unsqueeze(0), z_pred.unsqueeze(0), rot_pred, grip_pred.unsqueeze(0)]).to(device)
-        else:
-            pred_action = torch.cat([x_pred.unsqueeze(0), y_pred.unsqueeze(0), z_pred.unsqueeze(0), rot_pred]).to(device)
-
-        return pred_action
     
     def decode(self, logits: torch.tensor, soft: bool = False, loss : bool = False) -> np.ndarray: 
         device = logits.device
         x_bins_centers = torch.tensor(self.x_bin_centers, dtype=torch.float32).to(device)
         y_bins_centers = torch.tensor(self.y_bin_centers, dtype=torch.float32).to(device)
         z_bins_centers = torch.tensor(self.z_bin_centers, dtype=torch.float32).to(device)
-        rot_bins_centers = torch.tensor(self.rot_bin_centers, dtype=torch.float32).to(device)
+
+        rx_bins_centers = torch.tensor(self.rx_bin_centers, dtype=torch.float32).to(device)
+        ry_bins_centers = torch.tensor(self.ry_bin_centers, dtype=torch.float32).to(device)
+        rz_bins_centers = torch.tensor(self.rz_bin_centers, dtype=torch.float32).to(device)
         grip_bins_centers = torch.tensor([0,1], dtype=torch.float32).to(device)
 
         
@@ -121,19 +130,22 @@ class RLbenchPoseTokenizer:
         x_pred = F.softmax(x_score, dim = -1) @ x_bins_centers if soft else x_bins_centers[x_score.argmax(dim = -1)]
         y_pred = F.softmax(y_score, dim = -1) @ y_bins_centers if soft else y_bins_centers[y_score.argmax(dim = -1)]
         z_pred = F.softmax(z_score, dim = -1) @ z_bins_centers if soft else z_bins_centers[z_score.argmax(dim = -1)]
-        rot_pred = torch.tensor([]).to(device)
+        rx_pred = torch.tensor([]).to(device)
+        ry_pred = torch.tensor([]).to(device)
+        rz_pred = torch.tensor([]).to(device)
         gripper_pred = torch.tensor([]).to(device)
         if logits.shape[1] != 3:
-            rot_score = logits[:, 3:6, 300:400]
-            rot_pred = F.softmax(rot_score, dim = -1) @ rot_bins_centers if soft else rot_bins_centers[rot_score.argmax(dim = -1)]
+            rx_score = logits[:, 3:4, 300:400]
+            ry_score = logits[:, 4:5, 400:500]
+            rz_score = logits[:, 5:6, 500:600]
+            rx_pred = F.softmax(rx_score, dim = -1) @ rx_bins_centers if soft else rx_bins_centers[rx_score.argmax(dim = -1)]
+            ry_pred = F.softmax(ry_score, dim = -1) @ ry_bins_centers if soft else ry_bins_centers[ry_score.argmax(dim = -1)]
+            rz_pred = F.softmax(rz_score, dim = -1) @ rz_bins_centers if soft else rz_bins_centers[rz_score.argmax(dim = -1)]
             if logits.shape[1] != 6:
-                gripper_score = logits[:, 6:7, 400:]
+                gripper_score = logits[:, 6:7, 600:]
                 gripper_pred = F.softmax(gripper_score, dim = -1) @ grip_bins_centers if soft else grip_bins_centers[gripper_score.argmax(dim = -1)]
-        pred_action = torch.cat([x_pred, y_pred, z_pred, rot_pred, gripper_pred], dim = 1)
+        pred_action = torch.cat([x_pred, y_pred, z_pred, rx_pred, ry_pred, rz_pred, gripper_pred], dim = 1).to(device)
         return pred_action
-
-
-
 
     def get_mask(self, gt: torch.tensor):
         action_start = (gt == 32001).to(torch.int).argmax(dim=1)

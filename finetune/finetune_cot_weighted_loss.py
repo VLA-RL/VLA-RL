@@ -57,7 +57,7 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "Weighted_loss"
+    experiment_name: str = "Weighted_loss_2"
     dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
     train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
@@ -67,7 +67,7 @@ class FinetuneConfig:
 
     # Fine-tuning Parameters
     seed: int = 42                                                  # Random seed
-    episode: int = 5
+    episode: int = 1
     batch_size: int = 2#16                                            # Fine-tuning batch size
     test_batch_size: int = 2
     test_limit_length: int = 30
@@ -82,7 +82,7 @@ class FinetuneConfig:
     lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
     use_quantization: bool = True                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
-
+    dataset_statistics: tuple = (np.array([-0.20173775, -0.36754665,  0.81396234, -3.14153998, -0.38798628, -3.14158631,  0. ]), np.array([0.41802976, 0.45118147, 1.47966564, 3.14159215, 0.30391057, 3.14157801, 1.])) # Min-Max normalization statistics
 
     # Tracking Parameters
     wandb_project: str = "vla-rl"                                  # Name of W&B project to log to (use default!)
@@ -162,7 +162,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     trainable_params = [param for param in vla.parameters() if param.requires_grad]
 
     # Create Action Tokenizer
-    action_tokenizer = RLbenchPoseTokenizer(processor.tokenizer)
+    action_tokenizer = RLbenchPoseTokenizer(processor.tokenizer, cfg.dataset_statistics)
 
     trainset = RLbenchCotDataset(
         cfg.train_data_path,

@@ -92,15 +92,13 @@ class RLbenchCotDataset(Dataset):
 
         # Note =>> We expect the dataset to store statistics for action de-normalization. Specifically, we store the
         # per-dimension 1st and 99th action quantile. The values below correspond to "no normalization" for simplicity.
-        self.dataset_statistics = {
-            "rlbench": {
-                "action": {"q01": np.array(self.data['actions']).min(0), 
-                           "q99": np.array(self.data['actions']).max(0)}
-            }
-        }
+        self.dataset_statistics = (np.array(self.data['gripper_poses']).min(0), np.array(self.data['gripper_poses']).min(0))
 
     def __len__(self):
         return len(self.data['actions'])
+    
+    def get_minmax(self):
+        return self.dataset_statistics
 
     def __getitem__(self, idx):
         # TODO =>> Load image, action and instruction from disk -- we use dummy values
