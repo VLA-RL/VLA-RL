@@ -27,7 +27,7 @@ test_indice = np.setdiff1d(np.arange(variation), train_indice)
 valid_indice = np.random.choice(test_indice, int(len(test_indice)*0.5), replace=False)
 test_indice = np.setdiff1d(test_indice, valid_indice)
 
-names = ['train', 'test', 'valid']
+names = ['train', 'test']
 
 for i, indice in enumerate([train_indice, test_indice, valid_indice]):
 

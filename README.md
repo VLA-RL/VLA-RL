@@ -116,14 +116,7 @@ huggingface-cli download openvla/openvla-7b --local-dir $MODEL_ROOT/openvla-7b
 ## Data generation
 
 ```bash
-python rlbench_data_generator/dataset_generator.py \
-                      --save_path '/your/savepath' \
-                      --task 'pick_up_cup' \
-                      --image_size 224 224 \
-                      --renderer 'opengl' \ 
-                      --processes 3 \
-                      --episodes_per_task 3 \
-                      --variations 10
+python rlbench_data_generator/dataset_generator.py --save_path './datasets/pick_described_object' --task 'pick_described_object' --image_size 224 224 --renderer 'opengl' --processes 10 --episodes_per_task 10 --variations -1
 ```
 
 ```bash
@@ -147,8 +140,8 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_l1.py
 - [x] argmax is not differentiable, change to softmax @ decode
 - [x] accumulation steps
 - [x] train, test, valid split
-- [ ] Split trans, Rotation, grip loss
-- [ ] chain of thought
+- [x] Split trans, Rotation, grip loss
+- [x] chain of thought
 - [ ] RL 
 
 ### Experiments
