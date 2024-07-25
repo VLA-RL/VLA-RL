@@ -105,7 +105,7 @@ class RLbenchCotDataset(Dataset):
         image = Image.fromarray(self.data['imgs'][idx])
         instruction = self.data['instructions'][idx]
         cot = self.data['cots'][idx]
-        target_item_pose = self.data['target_item_poses'][idx]
+        target_item_pose = self.data['target_item_poses'][idx][:3]
         gripper_pose = self.data['gripper_poses'][idx]
         basket_position = self.data['basket_positions'][idx]
         action = self.data['actions'][idx]

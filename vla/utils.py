@@ -147,12 +147,12 @@ class runningLoss:
         self.action_open_loss = None
         self.alpha = 0.1
 
-    def update(self, nll_loss, object_position_loss, object_orientation_loss, target_position_loss, gripper_position_loss, gripper_orientation_loss, gripper_open_loss, action_position_loss, action_orientation_loss, action_open_loss):
+    def update(self, nll_loss, object_position_loss, gripper_position_loss, gripper_orientation_loss, gripper_open_loss, action_position_loss, action_orientation_loss, action_open_loss):
         if self.nll_loss is None:
             self.nll_loss = nll_loss.item()
             self.object_position_loss = object_position_loss.item()
-            self.object_orientation_loss = object_orientation_loss.item()
-            self.target_position_loss = target_position_loss.item()
+            # self.object_orientation_loss = object_orientation_loss.item()
+            # self.target_position_loss = target_position_loss.item()
             self.gripper_position_loss = gripper_position_loss.item()
             self.gripper_orientation_loss = gripper_orientation_loss.item()
             self.gripper_open_loss = gripper_open_loss.item()
@@ -163,8 +163,8 @@ class runningLoss:
         else:
             self.nll_loss = (1-self.alpha) * self.nll_loss + self.alpha * nll_loss.item()
             self.object_position_loss = (1-self.alpha) * self.object_position_loss + self.alpha * object_position_loss.item()
-            self.object_orientation_loss = (1-self.alpha) * self.object_orientation_loss + self.alpha * object_orientation_loss.item()
-            self.target_position_loss = (1-self.alpha) * self.target_position_loss + self.alpha * target_position_loss.item()
+            # self.object_orientation_loss = (1-self.alpha) * self.object_orientation_loss + self.alpha * object_orientation_loss.item()
+            # self.target_position_loss = (1-self.alpha) * self.target_position_loss + self.alpha * target_position_loss.item()
             self.gripper_position_loss = (1-self.alpha) * self.gripper_position_loss + self.alpha * gripper_position_loss.item()
             self.gripper_orientation_loss = (1-self.alpha) * self.gripper_orientation_loss + self.alpha * gripper_orientation_loss.item()
             self.gripper_open_loss = (1-self.alpha) * self.gripper_open_loss + self.alpha * gripper_open_loss.item()
@@ -176,8 +176,8 @@ class runningLoss:
         normalized_loss = {
             'nll_loss': nll_loss/self.nll_loss,
             'object_position_loss': object_position_loss/self.object_position_loss,
-            'object_orientation_loss': object_orientation_loss/self.object_orientation_loss,
-            'target_position_loss': target_position_loss/self.target_position_loss,
+            # 'object_orientation_loss': object_orientation_loss/self.object_orientation_loss,
+            # 'target_position_loss': target_position_loss/self.target_position_loss,
 
             'gripper_position_loss': gripper_position_loss/self.gripper_position_loss,
             'gripper_orientation_loss': gripper_orientation_loss/self.gripper_orientation_loss,
@@ -189,8 +189,8 @@ class runningLoss:
         }
 
         normalized_loss.update({'total_loss': 
-            0.2*normalized_loss['nll_loss'] + 0.1*normalized_loss['object_position_loss'] + 0.1*normalized_loss['object_orientation_loss'] +
-              0.1*normalized_loss['gripper_position_loss'] + 0.1*normalized_loss['gripper_orientation_loss'] + 0.05*normalized_loss['gripper_open_loss'] +
-                0.15*normalized_loss['action_position_loss'] + 0.15*normalized_loss['action_orientation_loss'] + 0.05*normalized_loss['action_open_loss']})
+            0.5*normalized_loss['nll_loss'] + 0.1*normalized_loss['object_position_loss'] +
+              0.1*normalized_loss['gripper_position_loss'] + 0.1*normalized_loss['gripper_orientation_loss'] +
+                0.1*normalized_loss['action_position_loss'] + 0.1*normalized_loss['action_orientation_loss'] })
 
         return normalized_loss

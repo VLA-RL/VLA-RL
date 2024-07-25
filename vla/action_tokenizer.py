@@ -36,7 +36,7 @@ class RLbenchPoseTokenizer:
         self.z_num_bins = 100
         self.z_bins = np.linspace(self.z_min, self.z_max, self.z_num_bins+1)
         self.z_bin_centers = (self.z_bins[:-1] + self.z_bins[1:]) / 2.0
-        #Rotation -pi theta
+
 
         self.rx_min = lower_bound[3]
         self.rx_max = upper_bound[3] - eps
