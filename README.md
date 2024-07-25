@@ -89,14 +89,14 @@ cd <install_dir>
 git clone https://github.com/VLA-RL/VLA-RL.git
 ```
 
-Install:
+<!-- Install:
 ```bash
 cd VLA-RL
-pip install -r requirements.txt
+# pip install -r requirements.txt
 
-export VLA_RL_ROOT=$(pwd)  # mostly used as a reference point for tutorials
+# export VLA_RL_ROOT=$(pwd)  # mostly used as a reference point for tutorials
 # python setup.py develop
-```
+``` -->
 
 
 <!-- **Note**: You might need versions of `torch==1.7.1` and `torchvision==0.8.2` that are compatible with your CUDA and hardware. Later versions should also be fine (in theory).  -->
@@ -110,13 +110,13 @@ export VLA_RL_ROOT=$(pwd)  # mostly used as a reference point for tutorials
 #### [OpenVLA - 7B](https://huggingface.co/openvla/openvla-7b)
 
 ```bash
-huggingface-cli download openvla/openvla-7b --local-dir $MODEL_ROOT/openvla-7b
+huggingface-cli download openvla/openvla-7b --local-dir changeme/openvla-7b
 ```
 
 #### [Embodied-CoT](https://huggingface.co/Embodied-CoT/ecot-openvla-7b-bridge)
 
 ```bash
-huggingface-cli download Embodied-CoT/ecot-openvla-7b-bridge --local-dir $MODEL_ROOT/openvla-7b
+huggingface-cli download Embodied-CoT/ecot-openvla-7b-bridge --local-dir changeme/openvla-7b
 ```
 
 ## Data generation
