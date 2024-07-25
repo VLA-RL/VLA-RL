@@ -113,14 +113,16 @@ export VLA_RL_ROOT=$(pwd)  # mostly used as a reference point for tutorials
 huggingface-cli download openvla/openvla-7b --local-dir $MODEL_ROOT/openvla-7b
 ```
 
+#### [Embodied-CoT](https://huggingface.co/Embodied-CoT/ecot-openvla-7b-bridge)
+
+```bash
+huggingface-cli download Embodied-CoT/ecot-openvla-7b-bridge --local-dir $MODEL_ROOT/openvla-7b
+```
+
 ## Data generation
 
 ```bash
-python rlbench_data_generator/dataset_generator.py --save_path './datasets/pick_described_object' --task 'pick_described_object' --image_size 224 224 --renderer 'opengl' --processes 10 --episodes_per_task 10 --variations -1
-```
-
-```bash
-python rlbench_data_generator/data_processing.py
+python rlbench_data_generator/pick_described_object/data_generator.py
 ```
 
 ## Download pretrained model
@@ -132,7 +134,7 @@ python rlbench_data_generator/data_processing.py
 ### Finetuning
 
 ```bash
-torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_l1.py
+torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_cot_weighted_loss1.py
 ```
 
 #### TODO list
@@ -153,8 +155,6 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_l1.py
 5. few shot rl (num of demo)
 
 #### Abalation Expoeriments
-
-
 
 
 ## Citations 
