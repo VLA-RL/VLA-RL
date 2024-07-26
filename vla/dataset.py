@@ -125,16 +125,14 @@ class RLbenchCotDataset(Dataset):
         USER: What action should the robot take to place the watermelon on the towel? ASSISTANT:
         """
 
-        prompt = """
-        In: What action should the robot take to {instruction}?
-        Out: {cot}</s>"""
-
+        prompt = "In: What action should the robot take to {instruction}? Out: Let's think step by step, {cot} </s>"
+        prompt_chat = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: What action should the robot take to {instruction}? ASSISTANT: Let's think step by step, {cot} </s>"
         cot = cot.format(target_item_pose = f"<object>{self.action_tokenizer(target_item_pose)} </object>",
                        basket_position = f"<target>{self.action_tokenizer(basket_position)} </target>",
                        gripper_pose = f"<gripper>{self.action_tokenizer(gripper_pose)} </gripper>",
                        action = f"<action>{self.action_tokenizer(action)} </action>")
 
-        prompt = prompt.format(instruction=instruction, cot=cot)
+        prompt = prompt_chat.format(instruction=instruction, cot=cot)
 
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt, add_special_tokens=True).input_ids

@@ -57,11 +57,11 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "nll_loss"
+    experiment_name: str = "nll_loss_cot_chat"
     dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
-    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
-    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data.pt")
+    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data1.pt")
+    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data1.pt")
     run_root_dir: Path = Path("./runs")                               # Path to directory to store logs & checkpoints
     adapter_dir: Path = Path("./adapter-tmp")                     # Temporary directory for LoRA weights before fusing
 
@@ -72,7 +72,7 @@ class FinetuneConfig:
     test_batch_size: int = 2
     test_limit_length: int = 30
     save_steps: int = 20#5000                                          # Interval for checkpoint saving
-    learning_rate: float = 5e-5                                     # Fine-tuning learning rate
+    learning_rate: float = 1e-4                                     # Fine-tuning learning rate
     weight_decay: float = 0.01                                       # Fine-tuning weight decay
     grad_accumulation_steps: int = 4                                # Gradient accumulation steps
 
@@ -206,9 +206,9 @@ def finetune(cfg: FinetuneConfig) -> None:
     if distributed_state.is_main_process:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{exp_id}")
 
-    optimizer = AdamW(trainable_params, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
+    optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
     # scheduler = StepLR(optimizer, step_size=5, gamma=0.9)
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0.1 * len(train_dataloader) * cfg.episode, num_training_steps=len(train_dataloader) * cfg.episode)
+    # scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0.1 * len(train_dataloader) * cfg.episode, num_training_steps=len(train_dataloader) * cfg.episode)
     scaler = torch.cuda.amp.GradScaler()
 
     train_running_loss = runningLoss()
@@ -430,7 +430,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
                     # Block on Main Process Checkpointing
                     # dist.barrier()
-                scheduler.step()
+                # scheduler.step()
                 progress.update()
             
 if __name__ == "__main__":

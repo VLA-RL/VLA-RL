@@ -2,7 +2,6 @@ import numpy as np
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import ArmActionMode, JointVelocity, JointPosition, EndEffectorPoseViaPlanning, EndEffectorPoseViaIK
 
-
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig, CameraConfig
@@ -10,7 +9,7 @@ from rlbench.tasks import PutGroceriesInCupboard, PickAndLift, StackBlocks, Plac
 from scipy.spatial.transform import Rotation as R
 from matplotlib import pyplot as plt
 import torch 
-
+import random
 import multiprocessing
 from multiprocessing import Manager
 import os
@@ -28,29 +27,33 @@ GROCERY_NAMES = [
 ]
 
 reasoning = [
-    "Gripper haven't grasped the {item}",
-    "Gripper grasped the {item}, but it is not in the basket",
-    "Gripper grasped the {item} and it is above the basket",
+    "The gripper hasn't grasped the {item}.",
+    "The gripper has grasped the {item}, but it is not in the basket.",
+    "The gripper has grasped the {item} and it is above the basket.",
 ]
+
 steps = [
-    "Move to the {item} and pick it up.",
-    "Move over the basket.",
-    "Move down and place the {item} in the basket.",
+    "Move the gripper to the {item} and pick it up.",
+    "Move the gripper over the basket.",
+    "Move the gripper down and place the {item} in the basket.",
 ]
-subtasks = [
-    "1.Move to the {item} and pick it up. 2.Move over the basket. 3.Place the {item} in the basket.",
-    "1.Move over the basket. 2.Place the {item} in the basket.",
-    ""
-]
-prompt = """
-{item} POSE: {target_item_pose}
-BASKET POSE: {basket_position}
-GRIPPER POSE: {gripper_pose}
-REASONING: {REASONING}
-SUBTASKS: {SUBTASKS}
-CURRENT STEP: {STEP}
-ACTION: {action}
-"""
+
+plan = "Move the gripper to the {item} and pick it up, move over the basket, place the {item} in the basket."
+
+prompt = "The plan is to move the gripper to the {item} and pick it up, then move over the basket, and then place the {item} in the basket. The {item} is located at {target_item_pose}. The basket is located at {basket_position}. The gripper pose is {gripper_pose}. {REASONING} So the current step is {STEP} and the next key pose of the gripper is {action}."
+
+prompt_1 = "The plan is to move the gripper to the {item} and pick it up, then move over the basket, and then place the {item} in the basket. The {item} is located at {target_item_pose}. The basket is located at {basket_position}. The gripper pose is {gripper_pose}. {REASONING} So the current step is {STEP} and the next key pose of the gripper is {action}."
+
+prompt_2 = "First, move the gripper to the {item} and pick it up. Next, move over the basket, and finally, place the {item} in the basket. The {item} is positioned at {target_item_pose}, the basket is at {basket_position}, and the gripper is at {gripper_pose}. {REASONING} The current step is {STEP} and the next key pose of the gripper is {action}."
+
+prompt_3 = "To complete the task, move the gripper to the {item} and pick it up, then move over the basket and place the {item} inside it. The {item} is found at {target_item_pose}, the basket's location is {basket_position}, and the gripper's current position is {gripper_pose}. {REASONING} Hence, the present step is {STEP} and the next key pose of the gripper to take is {action}."
+
+prompt_4 = "Move the gripper to the {item} to pick it up, then navigate over the basket and deposit the {item} inside. The {item} is at {target_item_pose}, the basket is at {basket_position}, and the gripper is at {gripper_pose}. {REASONING} Therefore, the next step is {STEP} and the next key pose of the gripper needed is {action}."
+
+prompt_5 = "Begin by moving the gripper to the {item} and picking it up. After that, move the gripper over the basket and place the {item} inside. The {item} is located at {target_item_pose}, the basket's position is {basket_position}, and the gripper's pose is {gripper_pose}. {REASONING} The current task step is {STEP} and the next key pose of the gripper to perform is {action}."
+
+prompts = [prompt_1, prompt_2, prompt_3, prompt_4, prompt_5]
+
 
 def run_episode(task, variation_num):
     target_item_poses = []
@@ -90,10 +93,11 @@ def run_episode(task, variation_num):
     id_1 = int(np.where(np.array(waypoints) == 1)[0].mean())
     id_2 = int(np.where(np.array(waypoints) == 2)[0].mean())
 
-    keyframe = lambda a,b, c, gap: [(a-(i+1)*gap, a, c) for i in range((a - b)//gap)]
+    keyframe = lambda a, b, c, gap: [(a-(i+1)*gap, a, c) for i in range((a - b)//gap)]
 
     keyframes = keyframe(id_0, 0, 0, 8) + keyframe(id_1, id_0, 1, 8) + keyframe(id_2, id_1,  2, 8)
 
+    items = []
     imgs = []
     instruction = "pick up the %s and place in the basket" % GROCERY_NAMES[variation_num]
     instructions = []
@@ -105,13 +109,14 @@ def run_episode(task, variation_num):
 
     for cur_id, key_id, step in keyframes:
         item = GROCERY_NAMES[variation_num]
+        items.append(item)
+        prompt = random.choice(prompts)
         inputs = prompt.format(item = item,
                     target_item_pose = "{target_item_pose}",
                     basket_position = "{basket_position}",
                     gripper_pose = "{gripper_pose}",
                     REASONING = reasoning[step].format(item=item),   
                     STEP = steps[step].format(item=item),
-                    SUBTASKS = subtasks[0].format(item=item),
                     action = "{action}")
         imgs.append(front_rgbs[cur_id])
         instructions.append(instruction)
@@ -120,11 +125,12 @@ def run_episode(task, variation_num):
         gripper_poses_.append(gripper_poses[cur_id])
         basket_positions_.append(basket_position)
         actions.append(gripper_poses[key_id])
-    return imgs, instructions, cots, target_item_poses_, gripper_poses_, basket_positions_, actions
+    return items, imgs, instructions, cots, target_item_poses_, gripper_poses_, basket_positions_, actions
 
 
 # Define the function to be executed in each process
 def process_variation(i, manager_dict, lock):
+    local_train_items = []
     local_train_imgs = []
     local_train_instructions = []
     local_train_cots = []
@@ -133,6 +139,7 @@ def process_variation(i, manager_dict, lock):
     local_train_basket_positions = []
     local_train_actions = []
 
+    local_test_items = []
     local_test_imgs = []
     local_test_instructions = []
     local_test_cots = []
@@ -156,10 +163,11 @@ def process_variation(i, manager_dict, lock):
     j = 0
     while j < 10:
         try:
-            imgs, instructions, cots, target_item_poses, gripper_poses, basket_positions, actions = run_episode(task, i)
+            items, imgs, instructions, cots, target_item_poses, gripper_poses, basket_positions, actions = run_episode(task, i)
             j += 1
             print(f"variation{i}, epoisode{j} done")
             if j < 8:
+                local_train_items += items
                 local_train_imgs += imgs
                 local_train_instructions += instructions
                 local_train_cots += cots
@@ -168,6 +176,7 @@ def process_variation(i, manager_dict, lock):
                 local_train_basket_positions += basket_positions
                 local_train_actions += actions
             else:
+                local_test_items += items
                 local_test_imgs += imgs
                 local_test_instructions += instructions
                 local_test_cots += cots
@@ -182,6 +191,7 @@ def process_variation(i, manager_dict, lock):
             
 
     with lock:
+        manager_dict['train_items'] += local_train_items
         manager_dict['train_imgs'] += local_train_imgs
         manager_dict['train_instructions'] += local_train_instructions
         manager_dict['train_cots'] += local_train_cots
@@ -190,6 +200,7 @@ def process_variation(i, manager_dict, lock):
         manager_dict['train_basket_positions'] += local_train_basket_positions
         manager_dict['train_actions'] += local_train_actions
 
+        manager_dict['test_items'] += local_test_items
         manager_dict['test_imgs'] += local_test_imgs
         manager_dict['test_instructions'] += local_test_instructions
         manager_dict['test_cots'] += local_test_cots
@@ -204,6 +215,7 @@ def main():
 
     # Create shared lists
     manager_dict = manager.dict({
+        'train_items': [],
         'train_imgs': [],
         'train_instructions': [],
         'train_cots': [],
@@ -211,6 +223,7 @@ def main():
         'train_gripper_poses': [],
         'train_basket_positions': [],
         'train_actions': [],
+        'test_items': [],
         'test_imgs': [],
         'test_instructions': [],
         'test_cots': [],
@@ -232,6 +245,7 @@ def main():
 
     print('Data collection done!')
     train_data = {
+        'items': manager_dict['train_items'],
         'imgs': manager_dict['train_imgs'],
         'instructions': manager_dict['train_instructions'],
         'cots': manager_dict['train_cots'],
@@ -241,6 +255,7 @@ def main():
         'actions': manager_dict['train_actions']
     }
     test_data = {
+        'items': manager_dict['test_items'],
         'imgs': manager_dict['test_imgs'],
         'instructions': manager_dict['test_instructions'],
         'cots': manager_dict['test_cots'],
@@ -253,8 +268,8 @@ def main():
     save_dir = './datasets/pick_described_object'
     check_and_make(save_dir)
 
-    torch.save(train_data, os.path.join(save_dir, 'train_data.pt')) 
-    torch.save(test_data, os.path.join(save_dir, 'test_data.pt'))
+    torch.save(train_data, os.path.join(save_dir, 'train_data1.pt')) 
+    torch.save(test_data, os.path.join(save_dir, 'test_data1.pt'))
 
 if __name__ == '__main__':
     main()
