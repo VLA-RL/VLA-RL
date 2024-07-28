@@ -32,7 +32,7 @@ reasoning = [
     "The gripper has grasped the {item} and it is above the basket.",
 ]
 
-steps = [
+subtasks = [
     "Move the gripper to the {item} and pick it up.",
     "Move the gripper over the basket.",
     "Move the gripper down and place the {item} in the basket.",
@@ -86,6 +86,12 @@ def run_episode(task, variation_num):
         front_rgbs.append(obs.front_rgb)
 
     task.reset()
+    lower_bound = np.array([task._scene._workspace_minx, task._scene._workspace_miny, task._scene._workspace_minz])
+    upper_bound = np.array([task._scene._workspace_maxx, task._scene._workspace_maxy, task._scene._workspace_maxz])
+    pos = np.random.uniform(lower_bound, upper_bound)
+    rot = np.random.uniform(-np.pi, np.pi, 3)
+    joint_position = task._scene.robot.arm.solve_ik_via_sampling(position=pos, euler=rot)
+    task._scene.robot.arm.set_joint_positions(joint_position[0], disable_dynamics=True)
     _ = task._scene.get_demo(callable_each_step=lambda obs: callable_fun(obs,task=task, variation_num=variation_num)) 
     basket_position = task._task.dropin_box.get_position()
 
@@ -98,6 +104,7 @@ def run_episode(task, variation_num):
     keyframes = keyframe(id_0, 0, 0, 8) + keyframe(id_1, id_0, 1, 8) + keyframe(id_2, id_1,  2, 8)
 
     items = []
+    steps = []
     imgs = []
     instruction = "pick up the %s and place in the basket" % GROCERY_NAMES[variation_num]
     instructions = []
@@ -110,13 +117,14 @@ def run_episode(task, variation_num):
     for cur_id, key_id, step in keyframes:
         item = GROCERY_NAMES[variation_num]
         items.append(item)
+        steps.append(step)
         prompt = random.choice(prompts)
         inputs = prompt.format(item = item,
                     target_item_pose = "{target_item_pose}",
                     basket_position = "{basket_position}",
                     gripper_pose = "{gripper_pose}",
                     REASONING = reasoning[step].format(item=item),   
-                    STEP = steps[step].format(item=item),
+                    STEP = subtasks[step].format(item=item),
                     action = "{action}")
         imgs.append(front_rgbs[cur_id])
         instructions.append(instruction)
@@ -125,12 +133,13 @@ def run_episode(task, variation_num):
         gripper_poses_.append(gripper_poses[cur_id])
         basket_positions_.append(basket_position)
         actions.append(gripper_poses[key_id])
-    return items, imgs, instructions, cots, target_item_poses_, gripper_poses_, basket_positions_, actions
+    return items, steps, imgs, instructions, cots, target_item_poses_, gripper_poses_, basket_positions_, actions
 
 
 # Define the function to be executed in each process
 def process_variation(i, manager_dict, lock):
     local_train_items = []
+    local_train_steps = []
     local_train_imgs = []
     local_train_instructions = []
     local_train_cots = []
@@ -140,6 +149,7 @@ def process_variation(i, manager_dict, lock):
     local_train_actions = []
 
     local_test_items = []
+    local_test_steps = []
     local_test_imgs = []
     local_test_instructions = []
     local_test_cots = []
@@ -163,11 +173,12 @@ def process_variation(i, manager_dict, lock):
     j = 0
     while j < 10:
         try:
-            items, imgs, instructions, cots, target_item_poses, gripper_poses, basket_positions, actions = run_episode(task, i)
+            items, steps, imgs, instructions, cots, target_item_poses, gripper_poses, basket_positions, actions = run_episode(task, i)
             j += 1
             print(f"variation{i}, epoisode{j} done")
             if j < 8:
                 local_train_items += items
+                local_train_steps += steps
                 local_train_imgs += imgs
                 local_train_instructions += instructions
                 local_train_cots += cots
@@ -177,6 +188,7 @@ def process_variation(i, manager_dict, lock):
                 local_train_actions += actions
             else:
                 local_test_items += items
+                local_test_steps += steps
                 local_test_imgs += imgs
                 local_test_instructions += instructions
                 local_test_cots += cots
@@ -192,6 +204,7 @@ def process_variation(i, manager_dict, lock):
 
     with lock:
         manager_dict['train_items'] += local_train_items
+        manager_dict['train_steps'] += local_train_steps
         manager_dict['train_imgs'] += local_train_imgs
         manager_dict['train_instructions'] += local_train_instructions
         manager_dict['train_cots'] += local_train_cots
@@ -201,6 +214,7 @@ def process_variation(i, manager_dict, lock):
         manager_dict['train_actions'] += local_train_actions
 
         manager_dict['test_items'] += local_test_items
+        manager_dict['test_steps'] += local_test_steps
         manager_dict['test_imgs'] += local_test_imgs
         manager_dict['test_instructions'] += local_test_instructions
         manager_dict['test_cots'] += local_test_cots
@@ -209,6 +223,8 @@ def process_variation(i, manager_dict, lock):
         manager_dict['test_basket_positions'] += local_test_basket_positions
         manager_dict['test_actions'] += local_test_actions
 
+    env.shutdown()
+
 def main():
     manager = Manager()
     lock = manager.Lock()
@@ -216,6 +232,7 @@ def main():
     # Create shared lists
     manager_dict = manager.dict({
         'train_items': [],
+        'train_steps': [],
         'train_imgs': [],
         'train_instructions': [],
         'train_cots': [],
@@ -224,6 +241,7 @@ def main():
         'train_basket_positions': [],
         'train_actions': [],
         'test_items': [],
+        'test_steps': [],
         'test_imgs': [],
         'test_instructions': [],
         'test_cots': [],
@@ -268,8 +286,8 @@ def main():
     save_dir = './datasets/pick_described_object'
     check_and_make(save_dir)
 
-    torch.save(train_data, os.path.join(save_dir, 'train_data1.pt')) 
-    torch.save(test_data, os.path.join(save_dir, 'test_data1.pt'))
+    torch.save(train_data, os.path.join(save_dir, 'train_data2.pt')) 
+    torch.save(test_data, os.path.join(save_dir, 'test_data2.pt'))
 
 if __name__ == '__main__':
     main()
