@@ -12,6 +12,7 @@ from transformers import PreTrainedTokenizerBase
 from scipy.spatial.transform import Rotation as R
 import torch
 import torch.nn.functional as F
+from vla.utils import AngleLoss
 
 class RLbenchPoseTokenizer:
     def __init__(
@@ -64,6 +65,8 @@ class RLbenchPoseTokenizer:
         self.grip_num_bins = 2
         self.n_bins = self.x_num_bins + self.y_num_bins + self.z_num_bins + self.rx_num_bins + self.ry_num_bins + self.rz_num_bins + self.grip_num_bins
         self.action_token_begin_idx: int = int(self.tokenizer.vocab_size - self.n_bins)#-352 #+1?
+
+        self.angle_loss = AngleLoss()
 
     def __call__(self, action: np.ndarray) -> Union[str, List[str]]:
         eps = 1e-8
@@ -168,6 +171,44 @@ class RLbenchPoseTokenizer:
             object_mask[i, object_start[i]+1:object_end[i]] = 1
             target_mask[i, target_start[i]+1:target_end[i]] = 1
         return action_mask.to(torch.bool), gripper_mask.to(torch.bool), object_mask.to(torch.bool), target_mask.to(torch.bool)
+
+    def get_loss(self, action_logits: torch.tensor, gt_action: torch.tensor, gripper_logits: torch.tensor, gt_gripper: torch.tensor,
+                 object_logits: torch.tensor, gt_object: torch.tensor, target_logits: torch.tensor, gt_target: torch.tensor, soft: bool = False):
+        pred_object = self.decode(object_logits, soft = True)
+        assert pred_object.shape == gt_object.shape, f"Object shape {pred_object.shape} != {gt_object.shape}"
+        object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3])
+
+        pred_target = self.decode(target_logits, soft = True)
+        assert pred_target.shape == gt_target.shape, f"Target shape {pred_target.shape} != {gt_target.shape}"
+        target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3])
+        
+        pred_gripper = self.decode(gripper_logits, soft = True)
+        assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
+        gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3])
+        gripper_orientation_loss = self.angle_loss(pred_gripper[:,3:6], gt_gripper[:,3:6])
+        gripper_open_gt = torch.zeros_like(gripper_logits[:,6,-2:]).scatter_(1, gt_gripper[:,6].unsqueeze(1).to(torch.int64), 1)
+        gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt.to(torch.float32))
+
+        pred_action = self.decode(action_logits, soft = True)
+        assert pred_action.shape == gt_action.shape, f"Action shape {pred_action.shape} != {gt_action.shape}"
+        action_position_loss = F.mse_loss(pred_action[:,:3], gt_action[:,:3].to(torch.float32))
+        action_orientation_loss = self.angle_loss(pred_action[:,3:6], gt_action[:,3:6].to(torch.float32))
+        action_open_gt = torch.zeros_like(action_logits[:,6,-2:]).scatter_(1, gt_action[:,6].unsqueeze(1).to(torch.int64), 1)
+        action_open_loss = F.cross_entropy(action_logits[:,6,-2:], action_open_gt.to(torch.float32))
+
+        loss_dict = {
+            'object_position_loss': object_position_loss,
+            'target_position_loss': target_position_loss,
+            'gripper_position_loss': gripper_position_loss,
+            'gripper_orientation_loss': gripper_orientation_loss,
+            'gripper_open_loss': gripper_open_loss,
+            'action_position_loss': action_position_loss,
+            'action_orientation_loss': action_orientation_loss,
+            'action_open_loss': action_open_loss
+        }
+
+        return loss_dict
+
 
 class RLbenchActionTokenizer:
     def __init__(

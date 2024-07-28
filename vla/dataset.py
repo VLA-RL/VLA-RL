@@ -138,13 +138,16 @@ class RLbenchCotDataset(Dataset):
         input_ids = self.base_tokenizer(prompt, add_special_tokens=True).input_ids
         labels = list(input_ids)
 
+
+
+
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
         #   =>> IMPORTANT :: IF WE'RE USING HF .forward(..., labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
         input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
         pixel_values = self.image_transform(image) #TODO
 
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
-        # labels[: -(len(action) + 1)] = IGNORE_INDEX
+        labels[:(labels == 32005).to(torch.int).argmax().item()] = IGNORE_INDEX
 
         data = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, actions=torch.tensor(action), 
                     target_item_poses = torch.tensor(target_item_pose), basket_positions = torch.tensor(basket_position),gripper_poses = torch.tensor(gripper_pose))

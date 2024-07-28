@@ -10,6 +10,7 @@ from typing import Callable, Dict, Sequence, Tuple
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn as nn
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
 IGNORE_INDEX = -100
@@ -194,3 +195,14 @@ class runningLoss:
                 0.1*normalized_loss['action_position_loss'] + 0.1*normalized_loss['action_orientation_loss'] })
 
         return normalized_loss
+
+class AngleLoss(nn.Module):
+    def __init__(self):
+        super(AngleLoss, self).__init__()
+
+    def forward(self, pred, target):
+        loss = torch.abs(pred - target)
+        loss = torch.min(loss, 2*torch.pi - loss)
+        loss = torch.mean(loss**2)
+        return loss
+

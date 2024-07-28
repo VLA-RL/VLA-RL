@@ -49,6 +49,7 @@ from vla.action_tokenizer import RLbenchPoseTokenizer
 from vla.dataset import RLbenchCotDataset
 import numpy as np
 import torch.nn.functional as F
+from vla.utils import AngleLoss
 
 
 @dataclass
@@ -57,19 +58,18 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "nll_loss_cot_chat"
+    experiment_name: str = "nll_loss_cot_chat_random_init_angle"
     dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
-    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data1.pt")
-    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data1.pt")
+    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data2.pt")
+    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data2.pt")
     run_root_dir: Path = Path("./runs")                               # Path to directory to store logs & checkpoints
     adapter_dir: Path = Path("./adapter-tmp")                     # Temporary directory for LoRA weights before fusing
 
     # Fine-tuning Parameters
     seed: int = 42                                                  # Random seed
-    episode: int = 5
+    episode: int = 2
     batch_size: int = 2#16                                            # Fine-tuning batch size
-    test_batch_size: int = 2
     test_limit_length: int = 30
     save_steps: int = 20#5000                                          # Interval for checkpoint saving
     learning_rate: float = 1e-4                                     # Fine-tuning learning rate
@@ -82,7 +82,7 @@ class FinetuneConfig:
     lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
     use_quantization: bool = True                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
-    dataset_statistics: tuple = (np.array([-0.20173775, -0.36754665,  0.81396234, -3.14153998, -0.38798628, -3.14158631,  0. ]), np.array([0.41802976, 0.45118147, 1.47966564, 3.14159215, 0.30391057, 3.14157801, 1.])) # Min-Max normalization statistics
+    dataset_statistics: tuple = (np.array([-0.27499999, -0.65500004,  0.75199986, -np.pi, -np.pi, -np.pi,  0. ]), np.array([0.77499999, 0.65500004, 1.75199986, np.pi, np.pi, np.pi, 1.])) # Min-Max normalization statistics
 
     # Tracking Parameters
     wandb_project: str = "vla-rl"                                  # Name of W&B project to log to (use default!)
@@ -195,7 +195,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     test_dataloader = DataLoader(
         testset,
-        batch_size=cfg.test_batch_size,
+        batch_size=cfg.batch_size,
         shuffle=True,
         sampler=None,
         collate_fn=collator,
@@ -212,6 +212,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     scaler = torch.cuda.amp.GradScaler()
 
     train_running_loss = runningLoss()
+    angle_loss = AngleLoss()
     # Train!
     vla.train()
     vla.gradient_checkpointing_enable()
@@ -241,49 +242,15 @@ def finetune(cfg: FinetuneConfig) -> None:
                     object_logits = output_logits[object_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
                     target_logits = output_logits[target_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
 
-                    # object
-                    pred_object = action_tokenizer.decode(object_logits, soft = True)
                     gt_object = batch['target_item_poses'].to(device_id)
-                    assert pred_object.shape == gt_object.shape, f"Object shape {pred_object.shape} != {gt_object.shape}"
-                    object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3].to(torch.float32))
-                    # object_orientation_loss = F.mse_loss(pred_object[:,3:], gt_object[:,3:].to(torch.float32))
-
-                    # target
-                    pred_target = action_tokenizer.decode(target_logits, soft = True)
                     gt_target = batch['basket_positions'].to(device_id)
-                    assert pred_target.shape == gt_target.shape, f"Target shape {pred_target.shape} != {gt_target.shape}"
-                    # target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3].to(torch.float32))
-
-                    # gripper
-                    pred_gripper = action_tokenizer.decode(gripper_logits, soft = True)
                     gt_gripper = batch['gripper_poses'].to(device_id)
-                    assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
-                    gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3].to(torch.float32))
-                    gripper_orientation_loss = F.mse_loss(pred_gripper[:,3:6], gt_gripper[:,3:6].to(torch.float32))
-                    gripper_open_gt = torch.zeros_like(gripper_logits[:,6,-2:]).scatter_(1, gt_gripper[:,6].unsqueeze(1).to(torch.int64), 1)
-                    gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt.to(torch.float32))
-
-                    #action
-                    pred_action = action_tokenizer.decode(action_logits, soft = True)
                     gt_action = batch['actions'].to(device_id)
-                    assert pred_action.shape == gt_action.shape, f"Action shape {pred_action.shape} != {gt_action.shape}"
-                    action_position_loss = F.mse_loss(pred_action[:,:3], gt_action[:,:3].to(torch.float32))
-                    action_orientation_loss = F.mse_loss(pred_action[:,3:6], gt_action[:,3:6].to(torch.float32))
-                    action_open_gt = torch.zeros_like(action_logits[:,6,-2:]).scatter_(1, gt_action[:,6].unsqueeze(1).to(torch.int64), 1)
-                    action_open_loss = F.cross_entropy(action_logits[:,6,-2:], action_open_gt.to(torch.float32))
-
-                # normalized_loss = train_running_loss.update(
-                #     nll_loss=train_nll_loss,
-                #     object_position_loss=object_position_loss,
-                #     # object_orientation_loss,
-                #     # target_position_loss=target_position_loss,
-                #     gripper_position_loss=gripper_position_loss,
-                #     gripper_orientation_loss=gripper_orientation_loss,
-                #     gripper_open_loss=gripper_open_loss,
-                #     action_position_loss=action_position_loss,
-                #     action_orientation_loss=action_orientation_loss,
-                #     action_open_loss=action_open_loss
-                # )
+                    
+                    loss_dict = action_tokenizer.get_loss(action_logits=action_logits, gripper_logits=gripper_logits, object_logits=object_logits, target_logits=target_logits, gt_action=gt_action, gt_gripper=gt_gripper, gt_object=gt_object, gt_target=gt_target)
+                    loss_dict = train_running_loss.update(
+                        nll_loss=train_nll_loss,loss_dict
+                    )
 
                 train_loss = train_nll_loss/cfg.grad_accumulation_steps
                 scaler.scale(train_loss).backward()
@@ -294,15 +261,15 @@ def finetune(cfg: FinetuneConfig) -> None:
                     wandb.log(
                         {
                             "train/nll_loss": train_nll_loss,
-                            "train/object_position_loss": object_position_loss,
+                            "train/object_position_loss": loss_dict['object_position_loss'],
                             # "train/object_orientation_loss": object_orientation_loss,
                             # "train/target_position_loss": target_position_loss,
-                            "train/gripper_position_loss": gripper_position_loss,
-                            "train/gripper_orientation_loss": gripper_orientation_loss,
-                            "train/gripper_open_loss": gripper_open_loss,
-                            "train/action_position_loss": action_position_loss,
-                            "train/action_orientation_loss": action_orientation_loss,
-                            "train/action_open_loss": action_open_loss,
+                            "train/gripper_position_loss": loss_dict['gripper_position_loss'],
+                            "train/gripper_orientation_loss": loss_dict['gripper_orientation_loss'],
+                            "train/gripper_open_loss": loss_dict['gripper_open_loss'],
+                            "train/action_position_loss": loss_dict['action_position_loss'],
+                            "train/action_orientation_loss": loss_dict['action_orientation_loss'],
+                            "train/action_open_loss": loss_dict['action_open_loss'],
                         },
                         step = total_step
                     )
@@ -343,48 +310,26 @@ def finetune(cfg: FinetuneConfig) -> None:
                             output_gt = batch["labels"][:, 1:].to(device_id)
                             action_mask, gripper_mask, object_mask, target_mask = action_tokenizer.get_mask(output_gt)
 
-                            action_logits = output_logits[action_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.test_batch_size,-1,action_tokenizer.n_bins)
-                            gripper_logits = output_logits[gripper_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.test_batch_size,-1,action_tokenizer.n_bins)
-                            object_logits = output_logits[object_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.test_batch_size,-1,action_tokenizer.n_bins)
-                            target_logits = output_logits[target_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.test_batch_size,-1,action_tokenizer.n_bins)
+                            action_logits = output_logits[action_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
+                            gripper_logits = output_logits[gripper_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
+                            object_logits = output_logits[object_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
+                            target_logits = output_logits[target_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
 
-                            # object
-                            pred_object = action_tokenizer.decode(object_logits, soft = True)
                             gt_object = batch['target_item_poses'].to(device_id)
-                            assert pred_object.shape == gt_object.shape, f"Object shape {pred_object.shape} != {gt_object.shape}"
-                            object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3])
-                            # object_orientation_loss = F.mse_loss(pred_object[:,3:], gt_object[:,3:])
-                            test_object_position_loss.append(object_position_loss)
-                            # test_object_orientation_loss.append(object_orientation_loss)
-
-                            # target
-                            pred_target = action_tokenizer.decode(target_logits, soft = True)
                             gt_target = batch['basket_positions'].to(device_id)
-                            assert pred_target.shape == gt_target.shape, f"Target shape {pred_target.shape} != {gt_target.shape}"
-                            # target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3])
-                            # test_target_position_loss.append(target_position_loss)
-
-                            # gripper
-                            pred_gripper = action_tokenizer.decode(gripper_logits, soft = True)
                             gt_gripper = batch['gripper_poses'].to(device_id)
-                            assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
-                            gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3])
-                            gripper_orientation_loss = F.mse_loss(pred_gripper[:,3:6], gt_gripper[:,3:6])
-                            gripper_open_loss = F.mse_loss(pred_gripper[:,6], gt_gripper[:,6])
-                            test_gripper_position_loss.append(gripper_position_loss)
-                            test_gripper_orientation_loss.append(gripper_orientation_loss)
-                            test_gripper_open_loss.append(gripper_open_loss)
-
-                            #action
-                            pred_action = action_tokenizer.decode(action_logits, soft = True)
                             gt_action = batch['actions'].to(device_id)
-                            assert pred_action.shape == gt_action.shape, f"Action shape {pred_action.shape} != {gt_action.shape}"
-                            action_position_loss = F.mse_loss(pred_action[:,:3], gt_action[:,:3])
-                            action_orientation_loss = F.mse_loss(pred_action[:,3:6], gt_action[:,3:6])
-                            action_open_loss = F.mse_loss(pred_action[:,6], gt_action[:,6])
-                            test_action_position_loss.append(action_position_loss)
-                            test_action_orientation_loss.append(action_orientation_loss)
-                            test_action_open_loss.append(action_open_loss)
+                            
+                            loss_dict = action_tokenizer.get_loss(action_logits=action_logits, gripper_logits=gripper_logits, object_logits=object_logits, target_logits=target_logits, gt_action=gt_action, gt_gripper=gt_gripper, gt_object=gt_object, gt_target=gt_target)
+
+                            test_object_position_loss.append(loss_dict['object_position_loss'])
+                            test_gripper_position_loss.append(loss_dict['gripper_position_loss'])
+                            test_gripper_orientation_loss.append(loss_dict['gripper_orientation_loss'])
+                            test_gripper_open_loss.append(loss_dict['gripper_open_loss'])
+                            test_action_position_loss.append(loss_dict['action_position_loss'])
+                            test_action_orientation_loss.append(loss_dict['action_orientation_loss'])
+                            test_action_open_loss.append(loss_dict['action_open_loss'])
+
 
                             if test_idx >= cfg.test_limit_length:
                                 break
@@ -393,7 +338,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                     test_object_position_loss = torch.stack(test_object_position_loss).mean()
                     # test_object_orientation_loss = torch.stack(test_object_orientation_loss).mean()
                     # test_target_position_loss = torch.stack(test_target_position_loss).mean()
-                    test_gripper_position_loss = torch.stack(test_gripper_position_loss).mean()
+                    test_gripper_position_loss = torch.stack(test_gripper_position_loss ).mean()
                     test_gripper_orientation_loss = torch.stack(test_gripper_orientation_loss).mean()
                     test_gripper_open_loss = torch.stack(test_gripper_open_loss).mean()
                     test_action_position_loss = torch.stack(test_action_position_loss).mean()
