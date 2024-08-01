@@ -125,21 +125,21 @@ class RLbenchCotDataset(Dataset):
         USER: What action should the robot take to place the watermelon on the towel? ASSISTANT:
         """
 
-        prompt = "In: What action should the robot take to {instruction}? Out: Let's think step by step, {cot} </s>"
-        prompt_chat = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: What action should the robot take to {instruction}? ASSISTANT: Let's think step by step, {cot} </s>"
-        cot = cot.format(target_item_pose = f"<object>{self.action_tokenizer(target_item_pose)} </object>",
-                       basket_position = f"<target>{self.action_tokenizer(basket_position)} </target>",
-                       gripper_pose = f"<gripper>{self.action_tokenizer(gripper_pose)} </gripper>",
-                       action = f"<action>{self.action_tokenizer(action)} </action>")
+        prompt = "In: You are an assistant helping to control a robotic manipulator. The robot performs tasks by following a series of steps to interact with objects in its environment. What the next key pose of gripper should the robot take to {instruction}? Out: Let's think step by step, {cot} </s>"
+        # prompt_chat = "You are an assistant helping to control a robotic manipulator. The robot performs tasks by following a series of steps to interact with objects in its environment. The environment includes items like soup cans and baskets, and the robot uses a gripper to pick up and move these items.\n\nInstructions format:\n- 'USER': Describes the task to be performed.\n- 'ASSISTANT': Provides a detailed step-by-step plan for the robot to execute the task.\n\nThe 'ASSISTANT' response includes:\n1. A logical step-by-step plan for the task.\n2. The current positions of relevant objects and the gripper.\n3. The current state of the gripper (whether it has grasped the object or not).\n4. The next key pose of the gripper to achieve the task.\n\nExample:\n\nUSER: What action should the robot take to pick up the soup and place it in the basket?\nASSISTANT: Let's think step by step. The plan is to move the gripper to the soup and pick it up, then move over the basket, and then place the soup in the basket. The soup is located at <object>ĉ‖호 </object>. The basket is located at <target>Ζ‖ご </target>. The gripper pose is <gripper>阳‖素군雅导弘 </gripper>. The gripper hasn't grasped the soup. So the current step is to move the gripper to the soup and pick it up. The next key pose of the gripper is <action>机‖素秀麻방弘 </action>. \n <current conversation> USER: What is the next key pose of the gripper should the robot take to {instruction}? ASSISTANT: Let's think step by step, {cot}</s>"
+        # prompt_instruct = "In: You are an assistant helping to control a robotic manipulator. The robot performs tasks by following a series of steps to interact with objects in its environment."
+        cot = cot.format(target_item_pose = f" <object>{self.action_tokenizer(target_item_pose)} </object>",
+                       basket_position = f" <target>{self.action_tokenizer(basket_position)} </target>",
+                       gripper_pose = f" <gripper>{self.action_tokenizer(gripper_pose)} </gripper>",
+                       action = f" <action>{self.action_tokenizer(action)} </action>")
 
-        prompt = prompt_chat.format(instruction=instruction, cot=cot)
+        prompt = prompt.format(instruction=instruction, cot=cot)
 
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt, add_special_tokens=True).input_ids
         labels = list(input_ids)
 
-
-
+        
 
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
         #   =>> IMPORTANT :: IF WE'RE USING HF .forward(..., labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
@@ -147,7 +147,13 @@ class RLbenchCotDataset(Dataset):
         pixel_values = self.image_transform(image) #TODO
 
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
-        labels[:(labels == 32005).to(torch.int).argmax().item()] = IGNORE_INDEX
+
+        # current_conversation_idx = (input_ids == 32009).to(torch.int).argmax().item()
+        # object_idx = (input_ids[current_conversation_idx:] == 32005).to(torch.int).argmax().item()
+
+        # labels[:current_conversation_idx+object_idx] = IGNORE_INDEX
+        out_idx = (input_ids == 4451).to(torch.int).argmax().item()
+        labels[:out_idx] = IGNORE_INDEX
 
         data = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, actions=torch.tensor(action), 
                     target_item_poses = torch.tensor(target_item_pose), basket_positions = torch.tensor(basket_position),gripper_poses = torch.tensor(gripper_pose))

@@ -55,7 +55,7 @@ prompt_5 = "Begin by moving the gripper to the {item} and picking it up. After t
 prompts = [prompt_1, prompt_2, prompt_3, prompt_4, prompt_5]
 
 
-def run_episode(task, variation_num):
+def run_episode(task, variation_num, episode_num):
     target_item_poses = []
     waypoints = []
     gripper_poses = []
@@ -101,7 +101,9 @@ def run_episode(task, variation_num):
 
     keyframe = lambda a, b, c, gap: [(a-(i+1)*gap, a, c) for i in range((a - b)//gap)]
 
-    keyframes = keyframe(id_0, 0, 0, 8) + keyframe(id_1, id_0, 1, 8) + keyframe(id_2, id_1,  2, 8)
+    gap = 10
+
+    keyframes = keyframe(id_0, 0, 0, gap) + keyframe(id_1, id_0, 1, gap) + keyframe(id_2, id_1,  2, gap)
 
     items = []
     steps = []
@@ -114,7 +116,7 @@ def run_episode(task, variation_num):
     basket_positions_ = []
     actions = []
 
-    for cur_id, key_id, step in keyframes:
+    for id, (cur_id, key_id, step) in enumerate(keyframes):
         item = GROCERY_NAMES[variation_num]
         items.append(item)
         steps.append(step)
@@ -126,7 +128,11 @@ def run_episode(task, variation_num):
                     REASONING = reasoning[step].format(item=item),   
                     STEP = subtasks[step].format(item=item),
                     action = "{action}")
-        imgs.append(front_rgbs[cur_id])
+        #save image with tag variation_num, episode_id, id
+        img_path = f"./datasets/pick_described_object/variation_{variation_num}/episode_{episode_num}"
+        check_and_make(img_path)
+        np.save(f"{img_path}/{id}.npy", front_rgbs[cur_id])
+        imgs.append(img_path)
         instructions.append(instruction)
         cots.append(inputs)
         target_item_poses_.append(target_item_poses[cur_id])
@@ -135,9 +141,8 @@ def run_episode(task, variation_num):
         actions.append(gripper_poses[key_id])
     return items, steps, imgs, instructions, cots, target_item_poses_, gripper_poses_, basket_positions_, actions
 
-
 # Define the function to be executed in each process
-def process_variation(i, manager_dict, lock):
+def process_variation(i, total_episodes, manager_dict, lock):
     local_train_items = []
     local_train_steps = []
     local_train_imgs = []
@@ -171,12 +176,12 @@ def process_variation(i, manager_dict, lock):
     task.set_variation(i)
 
     j = 0
-    while j < 10:
+    while j < total_episodes:
         try:
-            items, steps, imgs, instructions, cots, target_item_poses, gripper_poses, basket_positions, actions = run_episode(task, i)
+            items, steps, imgs, instructions, cots, target_item_poses, gripper_poses, basket_positions, actions = run_episode(task, i, j)
             j += 1
             print(f"variation{i}, epoisode{j} done")
-            if j < 8:
+            if j < total_episodes*0.8:
                 local_train_items += items
                 local_train_steps += steps
                 local_train_imgs += imgs
@@ -251,9 +256,10 @@ def main():
         'test_actions': []
     })
 
+    total_episodes = 20
     processes = []
     for i in range(5):
-        p = multiprocessing.Process(target=process_variation, args=(i, manager_dict, lock))
+        p = multiprocessing.Process(target=process_variation, args=(i,total_episodes, manager_dict, lock))
         processes.append(p)
         p.start()
         print(f"Process {i} started")
@@ -264,6 +270,7 @@ def main():
     print('Data collection done!')
     train_data = {
         'items': manager_dict['train_items'],
+        'steps': manager_dict['train_steps'],
         'imgs': manager_dict['train_imgs'],
         'instructions': manager_dict['train_instructions'],
         'cots': manager_dict['train_cots'],
@@ -274,6 +281,7 @@ def main():
     }
     test_data = {
         'items': manager_dict['test_items'],
+        'steps': manager_dict['test_steps'],
         'imgs': manager_dict['test_imgs'],
         'instructions': manager_dict['test_instructions'],
         'cots': manager_dict['test_cots'],
@@ -286,8 +294,8 @@ def main():
     save_dir = './datasets/pick_described_object'
     check_and_make(save_dir)
 
-    torch.save(train_data, os.path.join(save_dir, 'train_data2.pt')) 
-    torch.save(test_data, os.path.join(save_dir, 'test_data2.pt'))
+    torch.save(train_data, os.path.join(save_dir, 'train_data3.pt')) 
+    torch.save(test_data, os.path.join(save_dir, 'test_data3.pt'))
 
 if __name__ == '__main__':
     main()

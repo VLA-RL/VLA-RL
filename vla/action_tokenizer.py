@@ -149,6 +149,31 @@ class RLbenchPoseTokenizer:
                 gripper_pred = F.softmax(gripper_score, dim = -1) @ grip_bins_centers if soft else grip_bins_centers[gripper_score.argmax(dim = -1)]
         pred_action = torch.cat([x_pred, y_pred, z_pred, rx_pred, ry_pred, rz_pred, gripper_pred], dim = 1).to(device)
         return pred_action
+    
+    def sample(self, logits: torch.tensor) -> np.ndarray: 
+        grip_bin_centers = np.array([0,1])
+        x_score = F.softmax(logits[:, 0:1, :100], dim = -1).squeeze(0).squeeze(0)
+        y_score = F.softmax(logits[:, 1:2, 100:200], dim = -1).squeeze(0).squeeze(0)
+        z_score = F.softmax(logits[:, 2:3, 200:300], dim = -1).squeeze(0).squeeze(0)
+
+        rx_score = F.softmax(logits[:, 3:4, 300:400], dim = -1).squeeze(0).squeeze(0)
+        ry_score = F.softmax(logits[:, 4:5, 400:500], dim = -1).squeeze(0).squeeze(0)
+        rz_score = F.softmax(logits[:, 5:6, 500:600], dim = -1).squeeze(0).squeeze(0)
+        gripper_score = F.softmax(logits[:, 6:7, 600:], dim = -1).squeeze(0).squeeze(0)
+
+        #sample
+        x_pred = self.x_bin_centers[x_score.multinomial(1).item()]
+        y_pred = self.y_bin_centers[y_score.multinomial(1).item()]
+        z_pred = self.z_bin_centers[z_score.multinomial(1).item()]
+
+        rx_pred = self.rx_bin_centers[rx_score.multinomial(1).item()]
+
+        ry_pred = self.ry_bin_centers[ry_score.multinomial(1).item()]
+        rz_pred = self.rz_bin_centers[rz_score.multinomial(1).item()]
+        gripper_pred = grip_bin_centers[gripper_score.multinomial(1).item()]
+
+        pred_action = np.array([x_pred, y_pred, z_pred, rx_pred, ry_pred, rz_pred, gripper_pred])
+        return pred_action
 
     def get_mask(self, gt: torch.tensor):
         action_start = (gt == 32001).to(torch.int).argmax(dim=1)
@@ -176,16 +201,16 @@ class RLbenchPoseTokenizer:
                  object_logits: torch.tensor, gt_object: torch.tensor, target_logits: torch.tensor, gt_target: torch.tensor, soft: bool = False):
         pred_object = self.decode(object_logits, soft = True)
         assert pred_object.shape == gt_object.shape, f"Object shape {pred_object.shape} != {gt_object.shape}"
-        object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3])
+        object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3].to(torch.float32))
 
         pred_target = self.decode(target_logits, soft = True)
         assert pred_target.shape == gt_target.shape, f"Target shape {pred_target.shape} != {gt_target.shape}"
-        target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3])
+        target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3].to(torch.float32))
         
         pred_gripper = self.decode(gripper_logits, soft = True)
         assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
-        gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3])
-        gripper_orientation_loss = self.angle_loss(pred_gripper[:,3:6], gt_gripper[:,3:6])
+        gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3].to(torch.float32))
+        gripper_orientation_loss = self.angle_loss(pred_gripper[:,3:6], gt_gripper[:,3:6].to(torch.float32))
         gripper_open_gt = torch.zeros_like(gripper_logits[:,6,-2:]).scatter_(1, gt_gripper[:,6].unsqueeze(1).to(torch.int64), 1)
         gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt.to(torch.float32))
 

@@ -21,7 +21,7 @@ Run with:
 From https://github.com/openvla/openvla/blob/main/vla-scripts/finetune.py
 """
 
-# torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_cot_weighted_loss.py
+# torchrun --standalone --nnodes 1 --nproc-per-node 1 finetune/finetune_cot.py
 import os, sys
 sys.path.append('.')
 
@@ -49,7 +49,6 @@ from vla.action_tokenizer import RLbenchPoseTokenizer
 from vla.dataset import RLbenchCotDataset
 import numpy as np
 import torch.nn.functional as F
-from vla.utils import AngleLoss
 
 
 @dataclass
@@ -58,7 +57,7 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "nll_loss_cot_chat_random_init_angle"
+    experiment_name: str = "weighted_loss_cot"
     dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
     train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data2.pt")
@@ -72,9 +71,9 @@ class FinetuneConfig:
     batch_size: int = 2#16                                            # Fine-tuning batch size
     test_limit_length: int = 30
     save_steps: int = 20#5000                                          # Interval for checkpoint saving
-    learning_rate: float = 1e-4                                     # Fine-tuning learning rate
-    weight_decay: float = 0.01                                       # Fine-tuning weight decay
-    grad_accumulation_steps: int = 4                                # Gradient accumulation steps
+    learning_rate: float = 5e-5                                     # Fine-tuning learning rate
+    weight_decay: float = 0.01                                      # Fine-tuning weight decay
+    grad_accumulation_steps: int = 10                                # Gradient accumulation steps
 
     # LoRA Arguments
     use_lora: bool = True                                           # Whether to use LoRA fine-tuning
@@ -134,8 +133,9 @@ def finetune(cfg: FinetuneConfig) -> None:
         quantization_config=quantization_config,
         low_cpu_mem_usage=True,
         trust_remote_code=True,
-        device_map = "auto"
+        device_map = "cuda",
     )
+    
 
     # Device Placement =>> note that BitsAndBytes automatically handles for quantized training
     if cfg.use_quantization:
@@ -154,6 +154,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         )
         vla = get_peft_model(vla, lora_config)
         vla.print_trainable_parameters()
+
 
     # # Wrap VLA in PyTorch DDP Wrapper for Multi-GPU Training
     # vla = DDP(vla, device_ids=[device_id], find_unused_parameters=True, gradient_as_bucket_view=True)
@@ -206,13 +207,12 @@ def finetune(cfg: FinetuneConfig) -> None:
     if distributed_state.is_main_process:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{exp_id}")
 
-    optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
+    optimizer = AdamW(trainable_params, lr=cfg.learning_rate,weight_decay=cfg.weight_decay)
     # scheduler = StepLR(optimizer, step_size=5, gamma=0.9)
     # scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0.1 * len(train_dataloader) * cfg.episode, num_training_steps=len(train_dataloader) * cfg.episode)
     scaler = torch.cuda.amp.GradScaler()
 
     train_running_loss = runningLoss()
-    angle_loss = AngleLoss()
     # Train!
     vla.train()
     vla.gradient_checkpointing_enable()
@@ -222,7 +222,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         with tqdm.tqdm(total=train_dataloader.__len__() , leave=False) as progress:
             optimizer.zero_grad()
             for step_idx, batch in enumerate(train_dataloader):
-                total_step = step_idx + 1 + epoch * train_dataloader.__len__()
+                total_step = step_idx + epoch * train_dataloader.__len__()
                 vla.train()
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     output: CausalLMOutputWithPast = vla(
@@ -230,6 +230,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                         attention_mask=batch["attention_mask"].to(device_id),
                         pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
                         labels=batch["labels"],
+                        use_cache=False
                     )
                     train_nll_loss = output.loss
                 
@@ -248,15 +249,16 @@ def finetune(cfg: FinetuneConfig) -> None:
                     gt_action = batch['actions'].to(device_id)
                     
                     loss_dict = action_tokenizer.get_loss(action_logits=action_logits, gripper_logits=gripper_logits, object_logits=object_logits, target_logits=target_logits, gt_action=gt_action, gt_gripper=gt_gripper, gt_object=gt_object, gt_target=gt_target)
-                    loss_dict = train_running_loss.update(
-                        nll_loss=train_nll_loss,loss_dict
+                    normalized_loss_dict = train_running_loss.update(
+                        nll_loss=train_nll_loss, loss_dict = loss_dict
                     )
 
-                train_loss = train_nll_loss/cfg.grad_accumulation_steps
+                train_loss = normalized_loss_dict['total_loss']/cfg.grad_accumulation_steps
+                # train_loss = train_nll_loss/cfg.grad_accumulation_steps
                 scaler.scale(train_loss).backward()
                 
                 # Push Metrics to W&B (every 10 steps)
-                if distributed_state.is_main_process and step_idx % 10 == 0:
+                if distributed_state.is_main_process and total_step % 10 == 0:
 
                     wandb.log(
                         {
@@ -275,13 +277,13 @@ def finetune(cfg: FinetuneConfig) -> None:
                     )
 
                 # Optimizer Step
-                if total_step % cfg.grad_accumulation_steps == 0 or step_idx == train_dataloader.__len__():
+                if total_step % cfg.grad_accumulation_steps == 0:
                     scaler.step(optimizer)
                     scaler.update()
                     torch.cuda.empty_cache()
 
                 # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
-                if total_step > 0 and total_step % cfg.save_steps == 0:
+                if total_step % cfg.save_steps == 0:
                     ##testing
                     vla.eval()
 
@@ -367,7 +369,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                         print(f"Saving Model Checkpoint for Step {total_step}")
                         best_test_loss = test_loss
                         save_dir = adapter_dir if cfg.use_lora else run_dir
-                        # Save Processor & Weights
                         processor.save_pretrained(run_dir)
                         vla.save_pretrained(save_dir, save_embedding_layers=True, save_adapter=True, save_config=True)
                     

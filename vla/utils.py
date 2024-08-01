@@ -148,45 +148,43 @@ class runningLoss:
         self.action_open_loss = None
         self.alpha = 0.1
 
-    def update(self, nll_loss, object_position_loss, gripper_position_loss, gripper_orientation_loss, gripper_open_loss, action_position_loss, action_orientation_loss, action_open_loss):
+    def update(self, nll_loss, loss_dict):
         if self.nll_loss is None:
             self.nll_loss = nll_loss.item()
-            self.object_position_loss = object_position_loss.item()
+            self.object_position_loss = loss_dict['object_position_loss'].item()
             # self.object_orientation_loss = object_orientation_loss.item()
             # self.target_position_loss = target_position_loss.item()
-            self.gripper_position_loss = gripper_position_loss.item()
-            self.gripper_orientation_loss = gripper_orientation_loss.item()
-            self.gripper_open_loss = gripper_open_loss.item()
-            self.action_position_loss = action_position_loss.item()
-            self.action_orientation_loss = action_orientation_loss.item()
-            self.action_open_loss = action_open_loss.item()
+            self.gripper_position_loss = loss_dict['gripper_position_loss'].item()
+            self.gripper_orientation_loss = loss_dict['gripper_orientation_loss'].item()
+            self.gripper_open_loss = loss_dict['gripper_open_loss'].item()
+            self.action_position_loss = loss_dict['action_position_loss'].item()
+            self.action_orientation_loss = loss_dict['action_orientation_loss'].item()
+            self.action_open_loss = loss_dict['action_open_loss'].item()
         
         else:
             self.nll_loss = (1-self.alpha) * self.nll_loss + self.alpha * nll_loss.item()
-            self.object_position_loss = (1-self.alpha) * self.object_position_loss + self.alpha * object_position_loss.item()
+            self.object_position_loss = (1-self.alpha) * self.object_position_loss + self.alpha * loss_dict['object_position_loss'].item()
             # self.object_orientation_loss = (1-self.alpha) * self.object_orientation_loss + self.alpha * object_orientation_loss.item()
             # self.target_position_loss = (1-self.alpha) * self.target_position_loss + self.alpha * target_position_loss.item()
-            self.gripper_position_loss = (1-self.alpha) * self.gripper_position_loss + self.alpha * gripper_position_loss.item()
-            self.gripper_orientation_loss = (1-self.alpha) * self.gripper_orientation_loss + self.alpha * gripper_orientation_loss.item()
-            self.gripper_open_loss = (1-self.alpha) * self.gripper_open_loss + self.alpha * gripper_open_loss.item()
-            self.action_position_loss = (1-self.alpha) * self.action_position_loss + self.alpha * action_position_loss.item()
-            self.action_orientation_loss = (1-self.alpha) * self.action_orientation_loss + self.alpha * action_orientation_loss.item()
-            self.action_open_loss = (1-self.alpha) * self.action_open_loss + self.alpha * action_open_loss.item()
+            self.gripper_position_loss = (1-self.alpha) * self.gripper_position_loss + self.alpha * loss_dict['gripper_position_loss'].item()
+            self.gripper_orientation_loss = (1-self.alpha) * self.gripper_orientation_loss + self.alpha * loss_dict['gripper_orientation_loss'].item()
+            self.gripper_open_loss = (1-self.alpha) * self.gripper_open_loss + self.alpha * loss_dict['gripper_open_loss'].item()
+            self.action_position_loss = (1-self.alpha) * self.action_position_loss + self.alpha * loss_dict['action_position_loss'].item()
+            self.action_orientation_loss = (1-self.alpha) * self.action_orientation_loss + self.alpha * loss_dict['action_orientation_loss'].item()
+            self.action_open_loss = (1-self.alpha) * self.action_open_loss + self.alpha * loss_dict['action_open_loss'].item()
 
         
         normalized_loss = {
             'nll_loss': nll_loss/self.nll_loss,
-            'object_position_loss': object_position_loss/self.object_position_loss,
-            # 'object_orientation_loss': object_orientation_loss/self.object_orientation_loss,
-            # 'target_position_loss': target_position_loss/self.target_position_loss,
+            'object_position_loss': loss_dict['object_position_loss']/self.object_position_loss,
 
-            'gripper_position_loss': gripper_position_loss/self.gripper_position_loss,
-            'gripper_orientation_loss': gripper_orientation_loss/self.gripper_orientation_loss,
-            'gripper_open_loss': gripper_open_loss/self.gripper_open_loss,
+            'gripper_position_loss': loss_dict['gripper_position_loss']/self.gripper_position_loss,
+            'gripper_orientation_loss': loss_dict['gripper_orientation_loss']/self.gripper_orientation_loss,
+            'gripper_open_loss': loss_dict['gripper_open_loss']/self.gripper_open_loss,
             
-            'action_position_loss': action_position_loss/self.action_position_loss,
-            'action_orientation_loss': action_orientation_loss/self.action_orientation_loss,
-            'action_open_loss': action_open_loss/self.action_open_loss,
+            'action_position_loss': loss_dict['action_position_loss']/self.action_position_loss,
+            'action_orientation_loss': loss_dict['action_orientation_loss']/self.action_orientation_loss,
+            'action_open_loss': loss_dict['action_open_loss']/self.action_open_loss,
         }
 
         normalized_loss.update({'total_loss': 
