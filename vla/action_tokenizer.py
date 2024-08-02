@@ -55,12 +55,6 @@ class RLbenchPoseTokenizer:
         self.rz_bins = np.linspace(self.rz_min, self.rz_max, self.rz_num_bins+1)
         self.rz_bin_centers = (self.rz_bins[:-1] + self.rz_bins[1:]) / 2.0
 
-        # self.rot_min = -np.pi
-        # self.rot_max = np.pi - eps
-        # self.rot_num_bins = 100
-        # self.rot_bins = np.linspace(self.rot_min, self.rot_max, self.rot_num_bins+1)
-        # self.rot_bin_centers = (self.rot_bins[:-1] + self.rot_bins[1:]) / 2.0
-        
         #gripper 0, 1
         self.grip_num_bins = 2
         self.n_bins = self.x_num_bins + self.y_num_bins + self.z_num_bins + self.rx_num_bins + self.ry_num_bins + self.rz_num_bins + self.grip_num_bins
@@ -81,7 +75,8 @@ class RLbenchPoseTokenizer:
         z_discretized = - z_discretized + self.n_bins - self.x_num_bins - self.y_num_bins +1# (-202 - -103)
         discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized]])
         if len(action) != 3:
-            rx = np.clip(action[3], a_min=self.rx_min, a_max=self.rx_max-eps)
+            rx = action[3] - np.pi if action[3]>0 else action[3] + np.pi #Important
+            rx = np.clip(rx, a_min=self.rx_min, a_max=self.rx_max-eps)
             rx_discretized = np.digitize(rx, self.rx_bins)
             rx_discretized = - rx_discretized + self.n_bins - self.x_num_bins - self.y_num_bins - self.z_num_bins +1
             ry = np.clip(action[4], a_min=self.ry_min, a_max=self.ry_max-eps)
@@ -95,19 +90,8 @@ class RLbenchPoseTokenizer:
                 grip = action[-1]
                 grip_discretized = int(2 - grip)
                 discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized, rx_discretized, ry_discretized, rz_discretized, grip_discretized]])
-
-        # rot = np.clip(action[3:6], a_min=self.rot_min, a_max=self.rot_max-eps)
-        # rot_discretized = np.digitize(rot, self.rot_bins)
-        # rot_discretized = - rot_discretized + self.grip_num_bins + self.rot_num_bins+1# (-102 - -3)
-        # if len(action) == 7:
-        #     grip = action[-1]
-        #     grip_discretized = int(2 - grip) # (-2 - -1)
-        #     discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized], rot_discretized, [grip_discretized]])
-        # else:
-        #     discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized], rot_discretized])
-        
+                
         vocabulary_list = (self.tokenizer.vocab_size - discretized_actions)
-        # return self.tokenizer.batch_decode(vocabulary_list)
             # Handle single element vs. batch
         if len(discretized_actions.shape) == 1:
             return self.tokenizer.decode(list(vocabulary_list))
@@ -144,13 +128,14 @@ class RLbenchPoseTokenizer:
             rx_pred = F.softmax(rx_score, dim = -1) @ rx_bins_centers if soft else rx_bins_centers[rx_score.argmax(dim = -1)]
             ry_pred = F.softmax(ry_score, dim = -1) @ ry_bins_centers if soft else ry_bins_centers[ry_score.argmax(dim = -1)]
             rz_pred = F.softmax(rz_score, dim = -1) @ rz_bins_centers if soft else rz_bins_centers[rz_score.argmax(dim = -1)]
+            rx_pred = torch.where(rx_pred > 0, rx_pred - torch.pi, rx_pred + torch.pi)
             if logits.shape[1] != 6:
                 gripper_score = logits[:, 6:7, 600:]
                 gripper_pred = F.softmax(gripper_score, dim = -1) @ grip_bins_centers if soft else grip_bins_centers[gripper_score.argmax(dim = -1)]
         pred_action = torch.cat([x_pred, y_pred, z_pred, rx_pred, ry_pred, rz_pred, gripper_pred], dim = 1).to(device)
         return pred_action
     
-    def sample(self, logits: torch.tensor) -> np.ndarray: 
+    def sample_action(self, logits: torch.tensor) -> np.ndarray: 
         grip_bin_centers = np.array([0,1])
         x_score = F.softmax(logits[:, 0:1, :100], dim = -1).squeeze(0).squeeze(0)
         y_score = F.softmax(logits[:, 1:2, 100:200], dim = -1).squeeze(0).squeeze(0)
@@ -176,63 +161,139 @@ class RLbenchPoseTokenizer:
         return pred_action
 
     def get_mask(self, gt: torch.tensor):
-        action_start = (gt == 32001).to(torch.int).argmax(dim=1)
-        action_end = (gt == 32002).to(torch.int).argmax(dim=1)
-        gripper_start = (gt == 32003).to(torch.int).argmax(dim=1)
-        gripper_end = (gt == 32004).to(torch.int).argmax(dim=1)
-        object_start = (gt == 32005).to(torch.int).argmax(dim=1)
-        object_end = (gt == 32006).to(torch.int).argmax(dim=1)
-        target_start = (gt == 32007).to(torch.int).argmax(dim=1)
-        target_end = (gt == 32008).to(torch.int).argmax(dim=1)
+        gripper_start = (gt == 32001).to(torch.int).argmax(dim=1) 
+        gripper_end = (gt == 32002).to(torch.int).argmax(dim=1) 
+        object_start = (gt == 32008).to(torch.int).argmax(dim=1)
+        object_end = (gt == 32009).to(torch.int).argmax(dim=1)
+        target_start = (gt == 32010).to(torch.int).argmax(dim=1)
+        target_end = (gt == 32011).to(torch.int).argmax(dim=1)
+        action_start = (gt == 32014).to(torch.int).argmax(dim=1)
+        action_end = (gt == 32015).to(torch.int).argmax(dim=1)
 
-        action_mask = torch.zeros_like(gt)
         gripper_mask = torch.zeros_like(gt)
         object_mask = torch.zeros_like(gt)
         target_mask = torch.zeros_like(gt)
+        action_mask = torch.zeros_like(gt)
 
         for i in range(gt.size(0)):
-            action_mask[i, action_start[i]+1:action_end[i]] = 1
             gripper_mask[i, gripper_start[i]+1:gripper_end[i]] = 1
             object_mask[i, object_start[i]+1:object_end[i]] = 1
             target_mask[i, target_start[i]+1:target_end[i]] = 1
-        return action_mask.to(torch.bool), gripper_mask.to(torch.bool), object_mask.to(torch.bool), target_mask.to(torch.bool)
+            action_mask[i, action_start[i]+1:action_end[i]] = 1
 
-    def get_loss(self, action_logits: torch.tensor, gt_action: torch.tensor, gripper_logits: torch.tensor, gt_gripper: torch.tensor,
-                 object_logits: torch.tensor, gt_object: torch.tensor, target_logits: torch.tensor, gt_target: torch.tensor, soft: bool = False):
-        pred_object = self.decode(object_logits, soft = True)
-        assert pred_object.shape == gt_object.shape, f"Object shape {pred_object.shape} != {gt_object.shape}"
-        object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3].to(torch.float32))
+        item_mask = (gt >= 32003) & (gt <= 32007)
+        stage_mask = (gt >= 32012) & (gt <= 32013)
 
-        pred_target = self.decode(target_logits, soft = True)
-        assert pred_target.shape == gt_target.shape, f"Target shape {pred_target.shape} != {gt_target.shape}"
-        target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3].to(torch.float32))
+        return gripper_mask.to(torch.bool), item_mask.to(torch.bool), object_mask.to(torch.bool), target_mask.to(torch.bool), stage_mask.to(torch.bool), action_mask.to(torch.bool)
+
+    def get_loss(self, output: torch.tensor, batch: dict, output_start_idx):
         
+        nll_loss = output.loss
+        output_logits = output.logits[:, output_start_idx:-1]
+        device_id = output_logits.device
+        batch_size = output_logits.size(0)
+        output_gt = batch["labels"][:, 1:].to(device_id)
+        gripper_mask, item_mask, object_mask, target_mask, stage_mask, action_mask = self.get_mask(output_gt)
+
+        gripper_logits = output_logits[gripper_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
+        item_logits = output_logits[item_mask][:,32003:32008]
+        object_logits = output_logits[object_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
+        target_logits = output_logits[target_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
+        stage_logits = output_logits[stage_mask][:,32012:32014]
+        action_logits = output_logits[action_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
+
+        gt_gripper = batch['grippers'].to(device_id)
+        gt_item = batch['items'].to(device_id)
+        gt_object = batch['objects'].to(device_id)
+        gt_target = batch['targets'].to(device_id)
+        gt_stage = batch['stages'].to(device_id)
+        gt_action = batch['actions'].to(device_id)
+        
+        #Gripper Loss
         pred_gripper = self.decode(gripper_logits, soft = True)
         assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
         gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3].to(torch.float32))
         gripper_orientation_loss = self.angle_loss(pred_gripper[:,3:6], gt_gripper[:,3:6].to(torch.float32))
-        gripper_open_gt = torch.zeros_like(gripper_logits[:,6,-2:]).scatter_(1, gt_gripper[:,6].unsqueeze(1).to(torch.int64), 1)
-        gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt.to(torch.float32))
+        gripper_open_gt = gt_gripper[:,6].to(torch.int64)
+        gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt)
 
+        #Item Loss
+        gt_item = torch.tensor(gt_item, dtype=torch.int64).to(device_id)
+        item_loss = F.cross_entropy(item_logits, gt_item)
+
+        #Object Loss
+        pred_object = self.decode(object_logits, soft = True)
+        assert pred_object.shape == gt_object.shape, f"Object shape {pred_object.shape} != {gt_object.shape}"
+        object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3].to(torch.float32))
+
+        #Target Loss
+        pred_target = self.decode(target_logits, soft = True)
+        assert pred_target.shape == gt_target.shape, f"Target shape {pred_target.shape} != {gt_target.shape}"
+        target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3].to(torch.float32))
+
+        #Stage Loss
+        gt_stage = gt_stage.clone().detach()
+        stage_loss = F.cross_entropy(stage_logits, gt_stage)
+
+        #Action Loss
         pred_action = self.decode(action_logits, soft = True)
         assert pred_action.shape == gt_action.shape, f"Action shape {pred_action.shape} != {gt_action.shape}"
         action_position_loss = F.mse_loss(pred_action[:,:3], gt_action[:,:3].to(torch.float32))
         action_orientation_loss = self.angle_loss(pred_action[:,3:6], gt_action[:,3:6].to(torch.float32))
-        action_open_gt = torch.zeros_like(action_logits[:,6,-2:]).scatter_(1, gt_action[:,6].unsqueeze(1).to(torch.int64), 1)
-        action_open_loss = F.cross_entropy(action_logits[:,6,-2:], action_open_gt.to(torch.float32))
+        action_open_gt = gt_action[:,6].to(torch.int64)
+        action_open_loss = F.cross_entropy(action_logits[:,6,-2:], action_open_gt)
 
         loss_dict = {
-            'object_position_loss': object_position_loss,
-            'target_position_loss': target_position_loss,
+            'nll_loss':nll_loss,
             'gripper_position_loss': gripper_position_loss,
             'gripper_orientation_loss': gripper_orientation_loss,
             'gripper_open_loss': gripper_open_loss,
+            'item_loss': item_loss,
+            'object_position_loss': object_position_loss,
+            'target_position_loss': target_position_loss,
+            'stage_loss': stage_loss,
             'action_position_loss': action_position_loss,
             'action_orientation_loss': action_orientation_loss,
             'action_open_loss': action_open_loss
         }
-
         return loss_dict
+
+    # def get_loss(self, action_logits: torch.tensor, gt_action: torch.tensor, gripper_logits: torch.tensor, gt_gripper: torch.tensor,
+    #              object_logits: torch.tensor, gt_object: torch.tensor, target_logits: torch.tensor, gt_target: torch.tensor, soft: bool = False):
+    #     pred_object = self.decode(object_logits, soft = True)
+    #     assert pred_object.shape == gt_object.shape, f"Object shape {pred_object.shape} != {gt_object.shape}"
+    #     object_position_loss = F.mse_loss(pred_object[:,:3], gt_object[:,:3].to(torch.float32))
+
+    #     pred_target = self.decode(target_logits, soft = True)
+    #     assert pred_target.shape == gt_target.shape, f"Target shape {pred_target.shape} != {gt_target.shape}"
+    #     target_position_loss = F.mse_loss(pred_target[:,:3], gt_target[:,:3].to(torch.float32))
+        
+    #     pred_gripper = self.decode(gripper_logits, soft = True)
+    #     assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
+    #     gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3].to(torch.float32))
+    #     gripper_orientation_loss = self.angle_loss(pred_gripper[:,3:6], gt_gripper[:,3:6].to(torch.float32))
+    #     gripper_open_gt = torch.zeros_like(gripper_logits[:,6,-2:]).scatter_(1, gt_gripper[:,6].unsqueeze(1).to(torch.int64), 1)
+    #     gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt.to(torch.float32))
+
+    #     pred_action = self.decode(action_logits, soft = True)
+    #     assert pred_action.shape == gt_action.shape, f"Action shape {pred_action.shape} != {gt_action.shape}"
+    #     action_position_loss = F.mse_loss(pred_action[:,:3], gt_action[:,:3].to(torch.float32))
+    #     action_orientation_loss = self.angle_loss(pred_action[:,3:6], gt_action[:,3:6].to(torch.float32))
+    #     action_open_gt = torch.zeros_like(action_logits[:,6,-2:]).scatter_(1, gt_action[:,6].unsqueeze(1).to(torch.int64), 1)
+    #     action_open_loss = F.cross_entropy(action_logits[:,6,-2:], action_open_gt.to(torch.float32))
+
+    #     loss_dict = {
+    #         'object_position_loss': object_position_loss,
+    #         'target_position_loss': target_position_loss,
+    #         'gripper_position_loss': gripper_position_loss,
+    #         'gripper_orientation_loss': gripper_orientation_loss,
+    #         'gripper_open_loss': gripper_open_loss,
+    #         'action_position_loss': action_position_loss,
+    #         'action_orientation_loss': action_orientation_loss,
+    #         'action_open_loss': action_open_loss
+    #     }
+
+    #     return loss_dict
 
 
 class RLbenchActionTokenizer:
@@ -267,7 +328,7 @@ class RLbenchActionTokenizer:
         #gripper 0, 1
         self.grip_num_bins = 2
         self.n_bins = self.x_num_bins + self.y_num_bins + self.z_num_bins + self.rot_num_bins + self.grip_num_bins
-        self.action_token_begin_idx: int = int(self.tokenizer.vocab_size - self.n_bins)#-352 #+1?
+        self.action_token_begin_idx: int = int(self.tokenizer.vocab_size - self.n_bins)
 
     def __call__(self, action: np.ndarray) -> Union[str, List[str]]:
         eps = 1e-8

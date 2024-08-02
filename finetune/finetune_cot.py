@@ -44,7 +44,7 @@ from torch.optim.lr_scheduler import StepLR
 from transformers import get_linear_schedule_with_warmup
 
 from vla.base_prompter import PurePromptBuilder
-from vla.utils import PaddedCollatorForPosePrediction, runningLoss
+from vla.utils import PaddedCollatorForPosePrediction, runningLoss, SamplerForPosePrediction
 from vla.action_tokenizer import RLbenchPoseTokenizer
 from vla.dataset import RLbenchCotDataset
 import numpy as np
@@ -57,17 +57,21 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "weighted_loss_cot"
-    dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+    experiment_name: str = "nll_loss_cot_"
+    dataset_name: str = "pick_described_object2"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
-    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data2.pt")
-    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data2.pt")
+    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
+    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data.pt")
+    item_num = 5
+    stage_num = 2
+    add_tokens = ['<g>', '</g>'] + [f'<item_{i}>' for i in np.arange(item_num)] + ['<o>', '</o>', '<t>', '</t>'] + [f'<stage_{i}>' for i in np.arange(stage_num)] + ['<a>', '</a>']
+
     run_root_dir: Path = Path("./runs")                               # Path to directory to store logs & checkpoints
     adapter_dir: Path = Path("./adapter-tmp")                     # Temporary directory for LoRA weights before fusing
 
     # Fine-tuning Parameters
     seed: int = 42                                                  # Random seed
-    episode: int = 2
+    episode: int = 1
     batch_size: int = 2#16                                            # Fine-tuning batch size
     test_limit_length: int = 30
     save_steps: int = 20#5000                                          # Interval for checkpoint saving
@@ -81,7 +85,7 @@ class FinetuneConfig:
     lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
     use_quantization: bool = True                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
-    dataset_statistics: tuple = (np.array([-0.27499999, -0.65500004,  0.75199986, -np.pi, -np.pi, -np.pi,  0. ]), np.array([0.77499999, 0.65500004, 1.75199986, np.pi, np.pi, np.pi, 1.])) # Min-Max normalization statistics
+    dataset_statistics: tuple = (np.array([-0.2, -0.35,  0.75199986, -np.pi/2, -np.pi/2, -np.pi/2,  0. ]), np.array([0.5, 0.35, 1.3, np.pi/2, 0, np.pi/2, 1.])) # Min-Max normalization statistics
 
     # Tracking Parameters
     wandb_project: str = "vla-rl"                                  # Name of W&B project to log to (use default!)
@@ -126,16 +130,16 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Load OpenVLA Processor and Model using HF AutoClasses
     processor = AutoProcessor.from_pretrained(cfg.vla_path, trust_remote_code=True)
+    processor.tokenizer.add_tokens(cfg.add_tokens)
     vla = AutoModelForVision2Seq.from_pretrained(
         cfg.vla_path,
         torch_dtype=torch.bfloat16,
-        attn_implementation="sdpa",
+        # attn_implementation="sdpa",
         quantization_config=quantization_config,
         low_cpu_mem_usage=True,
         trust_remote_code=True,
         device_map = "cuda",
     )
-    
 
     # Device Placement =>> note that BitsAndBytes automatically handles for quantized training
     if cfg.use_quantization:
@@ -170,7 +174,6 @@ def finetune(cfg: FinetuneConfig) -> None:
         action_tokenizer,
         processor.tokenizer,
         image_transform=processor.image_processor.apply_transform,
-        prompt_builder_fn=PurePromptBuilder,
     )
 
     testset = RLbenchCotDataset(
@@ -178,18 +181,21 @@ def finetune(cfg: FinetuneConfig) -> None:
         action_tokenizer,
         processor.tokenizer,
         image_transform=processor.image_processor.apply_transform,
-        prompt_builder_fn=PurePromptBuilder,
     )
 
     # Create Collator and DataLoader
     collator = PaddedCollatorForPosePrediction(
         processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
     )
+
+    train_sampler = SamplerForPosePrediction(np.array(trainset.data['stages']),group1_ratio=0.1)
+    test_sampler = SamplerForPosePrediction(np.array(testset.data['stages']),group1_ratio=0.1)
+
     train_dataloader = DataLoader(
         trainset,
         batch_size=cfg.batch_size,
-        shuffle=True,
-        sampler=None,
+        shuffle=False,
+        sampler=train_sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
@@ -197,8 +203,8 @@ def finetune(cfg: FinetuneConfig) -> None:
     test_dataloader = DataLoader(
         testset,
         batch_size=cfg.batch_size,
-        shuffle=True,
-        sampler=None,
+        shuffle=False,
+        sampler=test_sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
@@ -232,47 +238,19 @@ def finetune(cfg: FinetuneConfig) -> None:
                         labels=batch["labels"],
                         use_cache=False
                     )
-                    train_nll_loss = output.loss
-                
-                    output_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches:-1]
-                    output_gt = batch["labels"][:, 1:].to(device_id)
-                    action_mask, gripper_mask, object_mask, target_mask = action_tokenizer.get_mask(output_gt)
 
-                    action_logits = output_logits[action_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
-                    gripper_logits = output_logits[gripper_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
-                    object_logits = output_logits[object_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
-                    target_logits = output_logits[target_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
+                    output_start_idx = vla.vision_backbone.featurizer.patch_embed.num_patches
+                    loss_dict = action_tokenizer.get_loss(output, batch, output_start_idx)
+                    normalized_loss_dict = train_running_loss.update(loss_dict = loss_dict)
 
-                    gt_object = batch['target_item_poses'].to(device_id)
-                    gt_target = batch['basket_positions'].to(device_id)
-                    gt_gripper = batch['gripper_poses'].to(device_id)
-                    gt_action = batch['actions'].to(device_id)
-                    
-                    loss_dict = action_tokenizer.get_loss(action_logits=action_logits, gripper_logits=gripper_logits, object_logits=object_logits, target_logits=target_logits, gt_action=gt_action, gt_gripper=gt_gripper, gt_object=gt_object, gt_target=gt_target)
-                    normalized_loss_dict = train_running_loss.update(
-                        nll_loss=train_nll_loss, loss_dict = loss_dict
-                    )
-
-                train_loss = normalized_loss_dict['total_loss']/cfg.grad_accumulation_steps
-                # train_loss = train_nll_loss/cfg.grad_accumulation_steps
+                # train_loss = normalized_loss_dict['total_loss']/cfg.grad_accumulation_steps
+                train_loss = loss_dict['nll_loss']/cfg.grad_accumulation_steps
                 scaler.scale(train_loss).backward()
                 
                 # Push Metrics to W&B (every 10 steps)
                 if distributed_state.is_main_process and total_step % 10 == 0:
-
-                    wandb.log(
-                        {
-                            "train/nll_loss": train_nll_loss,
-                            "train/object_position_loss": loss_dict['object_position_loss'],
-                            # "train/object_orientation_loss": object_orientation_loss,
-                            # "train/target_position_loss": target_position_loss,
-                            "train/gripper_position_loss": loss_dict['gripper_position_loss'],
-                            "train/gripper_orientation_loss": loss_dict['gripper_orientation_loss'],
-                            "train/gripper_open_loss": loss_dict['gripper_open_loss'],
-                            "train/action_position_loss": loss_dict['action_position_loss'],
-                            "train/action_orientation_loss": loss_dict['action_orientation_loss'],
-                            "train/action_open_loss": loss_dict['action_open_loss'],
-                        },
+                    log_dict = {f"train/{k}": v for k, v in loss_dict.items()}
+                    wandb.log(log_dict,
                         step = total_step
                     )
 
@@ -287,16 +265,19 @@ def finetune(cfg: FinetuneConfig) -> None:
                     ##testing
                     vla.eval()
 
-                    test_nll_loss = []
-                    test_object_position_loss = []
-                    test_object_orientation_loss = []
-                    test_target_position_loss = []
-                    test_gripper_position_loss = []
-                    test_gripper_orientation_loss = []
-                    test_gripper_open_loss = []
-                    test_action_position_loss = []
-                    test_action_orientation_loss = []
-                    test_action_open_loss = []
+                    test_loss_dict = {
+                        "nll_loss": [],
+                        "gripper_position_loss": [],
+                        "gripper_orientation_loss": [],
+                        "gripper_open_loss": [],
+                        "item_loss": [],
+                        "object_position_loss": [],
+                        "target_position_loss": [],
+                        "stage_loss": [],
+                        "action_position_loss": [],
+                        "action_orientation_loss": [],
+                        "action_open_loss": [],
+                    }
                     for test_idx, batch in enumerate(test_dataloader):
                         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
                             output: CausalLMOutputWithPast = vla(
@@ -305,65 +286,27 @@ def finetune(cfg: FinetuneConfig) -> None:
                                 pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
                                 labels=batch["labels"],
                             )
-                            test_nll_loss_ = output.loss
-                            test_nll_loss.append(test_nll_loss_)
 
-                            output_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches:-1]
-                            output_gt = batch["labels"][:, 1:].to(device_id)
-                            action_mask, gripper_mask, object_mask, target_mask = action_tokenizer.get_mask(output_gt)
 
-                            action_logits = output_logits[action_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
-                            gripper_logits = output_logits[gripper_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
-                            object_logits = output_logits[object_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
-                            target_logits = output_logits[target_mask][:,action_tokenizer.action_token_begin_idx:processor.tokenizer.vocab_size].view(cfg.batch_size,-1,action_tokenizer.n_bins)
-
-                            gt_object = batch['target_item_poses'].to(device_id)
-                            gt_target = batch['basket_positions'].to(device_id)
-                            gt_gripper = batch['gripper_poses'].to(device_id)
-                            gt_action = batch['actions'].to(device_id)
-                            
-                            loss_dict = action_tokenizer.get_loss(action_logits=action_logits, gripper_logits=gripper_logits, object_logits=object_logits, target_logits=target_logits, gt_action=gt_action, gt_gripper=gt_gripper, gt_object=gt_object, gt_target=gt_target)
-
-                            test_object_position_loss.append(loss_dict['object_position_loss'])
-                            test_gripper_position_loss.append(loss_dict['gripper_position_loss'])
-                            test_gripper_orientation_loss.append(loss_dict['gripper_orientation_loss'])
-                            test_gripper_open_loss.append(loss_dict['gripper_open_loss'])
-                            test_action_position_loss.append(loss_dict['action_position_loss'])
-                            test_action_orientation_loss.append(loss_dict['action_orientation_loss'])
-                            test_action_open_loss.append(loss_dict['action_open_loss'])
-
+                            output_start_idx = vla.vision_backbone.featurizer.patch_embed.num_patches
+                            loss_dict = action_tokenizer.get_loss(output, batch, output_start_idx)
+                            for k, v in loss_dict.items():
+                                test_loss_dict[k].append(v)
 
                             if test_idx >= cfg.test_limit_length:
                                 break
 
-                    test_nll_loss = torch.stack(test_nll_loss).mean()
-                    test_object_position_loss = torch.stack(test_object_position_loss).mean()
-                    # test_object_orientation_loss = torch.stack(test_object_orientation_loss).mean()
-                    # test_target_position_loss = torch.stack(test_target_position_loss).mean()
-                    test_gripper_position_loss = torch.stack(test_gripper_position_loss ).mean()
-                    test_gripper_orientation_loss = torch.stack(test_gripper_orientation_loss).mean()
-                    test_gripper_open_loss = torch.stack(test_gripper_open_loss).mean()
-                    test_action_position_loss = torch.stack(test_action_position_loss).mean()
-                    test_action_orientation_loss = torch.stack(test_action_orientation_loss).mean()
-                    test_action_open_loss = torch.stack(test_action_open_loss).mean()
+                    for k, v in test_loss_dict.items():
+                        test_loss_dict[k] = torch.stack(v).mean()
+                    
+                    log_dict = {f"test/{k}": v for k, v in test_loss_dict.items()}
 
                     wandb.log(
-                        {
-                            "test/nll_loss": test_nll_loss,
-                            "test/object_position_loss": test_object_position_loss,
-                            # "test/object_orientation_loss": test_object_orientation_loss,
-                            # "test/target_position_loss": test_target_position_loss,
-                            "test/gripper_position_loss": test_gripper_position_loss,
-                            "test/gripper_orientation_loss": test_gripper_orientation_loss,
-                            "test/gripper_open_loss": test_gripper_open_loss,
-                            "test/action_position_loss": test_action_position_loss,
-                            "test/action_orientation_loss": test_action_orientation_loss,
-                            "test/action_open_loss": test_action_open_loss,
-                        },
+                        log_dict,
                         step = total_step
                     )
 
-                    test_loss = test_nll_loss
+                    test_loss = test_loss_dict['nll_loss']
 
                     if best_test_loss > test_loss:
                         print(f"Saving Model Checkpoint for Step {total_step}")

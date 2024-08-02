@@ -1,3 +1,4 @@
+from PIL import Image
 import numpy as np
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import ArmActionMode, JointVelocity, JointPosition, EndEffectorPoseViaPlanning, EndEffectorPoseViaIK
@@ -45,7 +46,7 @@ def randomize_pose(task):
 
 def get_data(task, variation_num):
     obs = task._scene.get_observation()
-    img = obs.front_rgb
+    img = Image.fromarray(obs.front_rgb,'RGB')
     gripper_pose = obs.gripper_pose
     gripper_open = obs.gripper_open
     object_pos = task._task.get_graspable_objects()[variation_num].get_position()
@@ -69,7 +70,7 @@ def run_episode(task, variation_num, episode_num, save_root):
     stages = []
     actions = []
     id = 0
-    trial_times = 5
+    trial_times = 3
     task.set_variation(variation_num)
     save_dir = save_root + f"variation_{variation_num}/episode_{episode_num}/"
     check_and_make(save_dir)
@@ -81,8 +82,8 @@ def run_episode(task, variation_num, episode_num, save_root):
         img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
         task_action = np.concatenate([pos, quat, [1]])
         task.step(task_action)
-        img_path = save_dir+f"{id}.npy"
-        np.save(img_path, img)
+        img_path = save_dir+f"{id}.jpg"
+        img.save(img_path)
         img_paths.append(img_path)
         instructions.append(random.sample(desc,1)[0])
         gripper = pose2action(gripper_pose, gripper_open)
@@ -99,9 +100,8 @@ def run_episode(task, variation_num, episode_num, save_root):
 
         img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
         waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
-        img_path = save_dir+f"{id}.npy"
-
-        np.save(img_path, img)
+        img_path = save_dir+f"{id}.jpg"
+        img.save(img_path)
         img_paths.append(img_path)
         instructions.append(random.sample(desc,1)[0])
         gripper = pose2action(gripper_pose, gripper_open)
@@ -121,8 +121,8 @@ def run_episode(task, variation_num, episode_num, save_root):
     stage = 1
     img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
     waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
-    img_path = save_dir+f"{id}.npy"
-    np.save(img_path, img)
+    img_path = save_dir+f"{id}.jpg"
+    img.save(img_path)
     img_paths.append(img_path)
     instructions.append(random.sample(desc,1)[0])
     gripper = pose2action(gripper_pose, gripper_open)
@@ -136,12 +136,12 @@ def run_episode(task, variation_num, episode_num, save_root):
     actions.append(action)
     id += 1 
     
-    for i in range(trial_times):
+    for i in range(1):
         randomize_pose(task)
         img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
         waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
-        img_path = save_dir+f"{id}.npy"
-        np.save(img_path, img)
+        img_path = save_dir+f"{id}.jpg"
+        img.save(img_path)
         img_paths.append(img_path)
         instructions.append(random.sample(desc,1)[0])
         gripper = pose2action(gripper_pose, gripper_open)
@@ -246,33 +246,33 @@ def process_variation(i, total_episodes,save_root, manager_dict, lock):
     env.shutdown()
 
 def main():
-    save_root = './datasets/pick_described_object1/'
+    save_root = './datasets/pick_described_object2/'
     check_and_make(save_root)
     manager = Manager()
     lock = manager.Lock()
 
     # Create shared lists
     manager_dict = manager.dict({
-        'train_imgs': manager.list(),
-        'train_instructions': manager.list(),
-        'train_grippers': manager.list(),
-        'train_items': manager.list(),
-        'train_objects': manager.list(),
-        'train_targets': manager.list(),
-        'train_stages': manager.list(),
-        'train_actions': manager.list(),
+        'train_imgs': [],
+        'train_instructions': [],
+        'train_grippers': [],
+        'train_items': [],
+        'train_objects': [],
+        'train_targets': [],
+        'train_stages': [],
+        'train_actions': [],
 
-        'test_imgs': manager.list(),
-        'test_instructions': manager.list(),
-        'test_grippers': manager.list(),
-        'test_items': manager.list(),
-        'test_objects': manager.list(),
-        'test_targets': manager.list(),
-        'test_stages': manager.list(),
-        'test_actions': manager.list(),        
+        'test_imgs': [],
+        'test_instructions': [],
+        'test_grippers': [],
+        'test_items': [],
+        'test_objects': [],
+        'test_targets': [],
+        'test_stages': [],
+        'test_actions': [],
     })
 
-    total_episodes = 10
+    total_episodes = 20
     processes = []
     for i in range(5):
         p = multiprocessing.Process(target=process_variation, args=(i,total_episodes,save_root, manager_dict, lock))
