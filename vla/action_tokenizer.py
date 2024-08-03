@@ -75,7 +75,7 @@ class RLbenchPoseTokenizer:
         z_discretized = - z_discretized + self.n_bins - self.x_num_bins - self.y_num_bins +1# (-202 - -103)
         discretized_actions = np.concatenate([[x_discretized, y_discretized, z_discretized]])
         if len(action) != 3:
-            rx = action[3] - np.pi if action[3]>0 else action[3] + np.pi #Important
+            rx = action[3] - np.pi if action[3] > 0 else action[3] + np.pi #Important
             rx = np.clip(rx, a_min=self.rx_min, a_max=self.rx_max-eps)
             rx_discretized = np.digitize(rx, self.rx_bins)
             rx_discretized = - rx_discretized + self.n_bins - self.x_num_bins - self.y_num_bins - self.z_num_bins +1
@@ -135,7 +135,7 @@ class RLbenchPoseTokenizer:
         pred_action = torch.cat([x_pred, y_pred, z_pred, rx_pred, ry_pred, rz_pred, gripper_pred], dim = 1).to(device)
         return pred_action
     
-    def sample_action(self, logits: torch.tensor) -> np.ndarray: 
+    def get_action(self, logits: torch.tensor) -> np.ndarray: 
         grip_bin_centers = np.array([0,1])
         x_score = F.softmax(logits[:, 0:1, :100], dim = -1).squeeze(0).squeeze(0)
         y_score = F.softmax(logits[:, 1:2, 100:200], dim = -1).squeeze(0).squeeze(0)
@@ -152,7 +152,7 @@ class RLbenchPoseTokenizer:
         z_pred = self.z_bin_centers[z_score.multinomial(1).item()]
 
         rx_pred = self.rx_bin_centers[rx_score.multinomial(1).item()]
-
+        rx_pred = rx_pred - np.pi if rx_pred > 0 else rx_pred + np.pi
         ry_pred = self.ry_bin_centers[ry_score.multinomial(1).item()]
         rz_pred = self.rz_bin_centers[rz_score.multinomial(1).item()]
         gripper_pred = grip_bin_centers[gripper_score.multinomial(1).item()]
@@ -195,7 +195,7 @@ class RLbenchPoseTokenizer:
         output_gt = batch["labels"][:, 1:].to(device_id)
         gripper_mask, item_mask, object_mask, target_mask, stage_mask, action_mask = self.get_mask(output_gt)
 
-        gripper_logits = output_logits[gripper_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
+        # gripper_logits = output_logits[gripper_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
         item_logits = output_logits[item_mask][:,32003:32008]
         object_logits = output_logits[object_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
         target_logits = output_logits[target_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
@@ -210,15 +210,15 @@ class RLbenchPoseTokenizer:
         gt_action = batch['actions'].to(device_id)
         
         #Gripper Loss
-        pred_gripper = self.decode(gripper_logits, soft = True)
-        assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
-        gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3].to(torch.float32))
-        gripper_orientation_loss = self.angle_loss(pred_gripper[:,3:6], gt_gripper[:,3:6].to(torch.float32))
-        gripper_open_gt = gt_gripper[:,6].to(torch.int64)
-        gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt)
+        # pred_gripper = self.decode(gripper_logits, soft = True)
+        # assert pred_gripper.shape == gt_gripper.shape, f"Gripper shape {pred_gripper.shape} != {gt_gripper.shape}"
+        # gripper_position_loss = F.mse_loss(pred_gripper[:,:3], gt_gripper[:,:3].to(torch.float32))
+        # gripper_orientation_loss = self.angle_loss(pred_gripper[:,3:6], gt_gripper[:,3:6].to(torch.float32))
+        # gripper_open_gt = gt_gripper[:,6].to(torch.int64)
+        # gripper_open_loss = F.cross_entropy(gripper_logits[:,6,-2:], gripper_open_gt)
 
         #Item Loss
-        gt_item = torch.tensor(gt_item, dtype=torch.int64).to(device_id)
+        gt_item = gt_item.clone().detach()
         item_loss = F.cross_entropy(item_logits, gt_item)
 
         #Object Loss
@@ -245,9 +245,9 @@ class RLbenchPoseTokenizer:
 
         loss_dict = {
             'nll_loss':nll_loss,
-            'gripper_position_loss': gripper_position_loss,
-            'gripper_orientation_loss': gripper_orientation_loss,
-            'gripper_open_loss': gripper_open_loss,
+            # 'gripper_position_loss': gripper_position_loss,
+            # 'gripper_orientation_loss': gripper_orientation_loss,
+            # 'gripper_open_loss': gripper_open_loss,
             'item_loss': item_loss,
             'object_position_loss': object_position_loss,
             'target_position_loss': target_position_loss,

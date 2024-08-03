@@ -6,7 +6,7 @@ from rlbench.action_modes.arm_action_modes import ArmActionMode, JointVelocity, 
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig, CameraConfig
-from rlbench.tasks import PutGroceriesInCupboard, PickAndLift, StackBlocks, PlaceHangerOnRack, PickDescribedObject, TakeLidOffSaucepan, SetTheTable
+from rlbench.tasks import PutGroceriesInCupboard,PickDescribedObject
 from scipy.spatial.transform import Rotation as R
 from matplotlib import pyplot as plt
 import torch 
@@ -21,28 +21,28 @@ def check_and_make(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
 
-def randomize_pose(task):
-    np.random.seed()
-    while True:
-        try:
-            pos_lower_bound = np.array([-0.2, -0.35, task._scene._workspace_minz])
-            pos_upper_bound = np.array([task._scene._workspace_maxx, 0.35, 1.3])
-            rot_lower_bound = np.array([-np.pi/2, 0, -np.pi/2])
-            rot_upper_bound = np.array([np.pi/2, np.pi/2, np.pi/2])
-            pos = np.random.uniform(pos_lower_bound, pos_upper_bound)
-            euler = np.random.uniform(rot_lower_bound, rot_upper_bound)
-            euler[0] = np.clip(np.random.normal(0, np.pi/6),-np.pi/2,np.pi/2)
-            euler[1] = -np.clip(abs(np.random.normal(0,np.pi/6)),0, np.pi/2)
-            trans = lambda rx: rx - np.pi if rx > 0 else rx + np.pi 
-            euler[0] = trans(euler[0])
-            quat = R.from_euler('xyz', euler).as_quat()
-            joint_position = task._scene.robot.arm.solve_ik_via_sampling(position=pos, euler=euler,trials=10)
-            task.step(np.concatenate([pos, quat, [0]]))
-            break
-        except Exception as e:
-            print(e)
-            continue
-    return joint_position, pos, euler, quat
+# def randomize_pose(task, open):
+#     np.random.seed()
+#     while True:
+#         try:
+#             pos_lower_bound = np.array([-0.2, -0.35, task._scene._workspace_minz])
+#             pos_upper_bound = np.array([task._scene._workspace_maxx, 0.35, 1.3])
+#             rot_lower_bound = np.array([-np.pi/2, 0, -np.pi/2])
+#             rot_upper_bound = np.array([np.pi/2, np.pi/2, np.pi/2])
+#             pos = np.random.uniform(pos_lower_bound, pos_upper_bound)
+#             euler = np.random.uniform(rot_lower_bound, rot_upper_bound)
+#             euler[0] = np.clip(np.random.normal(0, np.pi/6),-np.pi/2,np.pi/2)
+#             euler[1] = -np.clip(abs(np.random.normal(0,np.pi/6)),0, np.pi/2)
+#             trans = lambda rx: rx - np.pi if rx > 0 else rx + np.pi 
+#             euler[0] = trans(euler[0])
+#             quat = R.from_euler('xyz', euler).as_quat()
+#             joint_position = task._scene.robot.arm.solve_ik_via_sampling(position=pos, euler=euler,trials=10)
+#             task.step(np.concatenate([pos, quat, [open]]))
+#             break
+#         except Exception as e:
+#             print(e)
+#             continue
+#     return joint_position, pos, euler, quat
 
 def get_data(task, variation_num):
     obs = task._scene.get_observation()
@@ -70,18 +70,19 @@ def run_episode(task, variation_num, episode_num, save_root):
     stages = []
     actions = []
     id = 0
-    trial_times = 3
     task.set_variation(variation_num)
     save_dir = save_root + f"variation_{variation_num}/episode_{episode_num}/"
     check_and_make(save_dir)
     desc, _ = task.reset()
-    for i in range(trial_times):
-        #stage 0
+    x = 1
+    y = 3
+    z = 3
+    for i in range(x):
         stage = 0
-        joint_position, pos, euler, quat = randomize_pose(task)
+        task._task.randomize_pose(False)
         img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
-        task_action = np.concatenate([pos, quat, [1]])
-        task.step(task_action)
+        # task_action = np.concatenate([gripper_pose, [1]])
+        # task.step(task_action)
         img_path = save_dir+f"{id}.jpg"
         img.save(img_path)
         img_paths.append(img_path)
@@ -97,7 +98,11 @@ def run_episode(task, variation_num, episode_num, save_root):
         action = pose2action(gripper_pose, 1)
         actions.append(action)
         id += 1
-
+    
+    for i in range(y):
+        #stage 0
+        stage = 0
+        task._task.randomize_pose(True)
         img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
         waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
         img_path = save_dir+f"{id}.jpg"
@@ -136,8 +141,9 @@ def run_episode(task, variation_num, episode_num, save_root):
     actions.append(action)
     id += 1 
     
-    for i in range(1):
-        randomize_pose(task)
+    for i in range(z):
+        stage = 1
+        task._task.randomize_pose(False)
         img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
         waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
         img_path = save_dir+f"{id}.jpg"
@@ -181,7 +187,7 @@ def process_variation(i, total_episodes,save_root, manager_dict, lock):
     local_test_actions = []
 
 
-    camera = CameraConfig(image_size=(448, 448), depth=False, point_cloud=False, mask=False)
+    camera = CameraConfig(image_size=(224, 224), depth=False, point_cloud=False, mask=False)
     obs_config = ObservationConfig(left_shoulder_camera=camera, right_shoulder_camera=camera, front_camera=camera, overhead_camera=camera)
     obs_config.front_camera.render_mode = RenderMode.OPENGL
     env = Environment(
@@ -246,7 +252,7 @@ def process_variation(i, total_episodes,save_root, manager_dict, lock):
     env.shutdown()
 
 def main():
-    save_root = './datasets/pick_described_object2/'
+    save_root = './datasets/pick_described_object/'
     check_and_make(save_root)
     manager = Manager()
     lock = manager.Lock()
@@ -272,7 +278,7 @@ def main():
         'test_actions': [],
     })
 
-    total_episodes = 20
+    total_episodes = 50
     processes = []
     for i in range(5):
         p = multiprocessing.Process(target=process_variation, args=(i,total_episodes,save_root, manager_dict, lock))

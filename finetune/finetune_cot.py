@@ -57,8 +57,8 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "nll_loss_cot_"
-    dataset_name: str = "pick_described_object2"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+    experiment_name: str = "0"
+    dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
     train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
     test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data.pt")
@@ -75,9 +75,11 @@ class FinetuneConfig:
     batch_size: int = 2#16                                            # Fine-tuning batch size
     test_limit_length: int = 30
     save_steps: int = 20#5000                                          # Interval for checkpoint saving
-    learning_rate: float = 5e-5                                     # Fine-tuning learning rate
+    learning_rate: float = 5e-4                                     # Fine-tuning learning rate
     weight_decay: float = 0.01                                      # Fine-tuning weight decay
-    grad_accumulation_steps: int = 10                                # Gradient accumulation steps
+    grad_accumulation_steps: int = 4                                # Gradient accumulation steps
+    train_loss: str = "weighted"                                         # Loss to optimize during fine-tuning
+    schedular : bool = False
 
     # LoRA Arguments
     use_lora: bool = True                                           # Whether to use LoRA fine-tuning
@@ -107,7 +109,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Configure Unique Experiment ID & Log Directory
     exp_id = (
-        f"{cfg.experiment_name}+{cfg.dataset_name}+e{cfg.episode}"
+        f"{cfg.experiment_name}+{cfg.train_loss}+{cfg.dataset_name}+e{cfg.episode}"
         f"+b{cfg.batch_size * cfg.grad_accumulation_steps}"
         f"+lr-{cfg.learning_rate}"
     )
@@ -134,7 +136,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     vla = AutoModelForVision2Seq.from_pretrained(
         cfg.vla_path,
         torch_dtype=torch.bfloat16,
-        # attn_implementation="sdpa",
+        attn_implementation="sdpa",
         quantization_config=quantization_config,
         low_cpu_mem_usage=True,
         trust_remote_code=True,
@@ -158,7 +160,6 @@ def finetune(cfg: FinetuneConfig) -> None:
         )
         vla = get_peft_model(vla, lora_config)
         vla.print_trainable_parameters()
-
 
     # # Wrap VLA in PyTorch DDP Wrapper for Multi-GPU Training
     # vla = DDP(vla, device_ids=[device_id], find_unused_parameters=True, gradient_as_bucket_view=True)
@@ -188,14 +189,14 @@ def finetune(cfg: FinetuneConfig) -> None:
         processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
     )
 
-    train_sampler = SamplerForPosePrediction(np.array(trainset.data['stages']),group1_ratio=0.1)
-    test_sampler = SamplerForPosePrediction(np.array(testset.data['stages']),group1_ratio=0.1)
+    # train_sampler = SamplerForPosePrediction(np.array(trainset.data['stages']), group1_ratio=0.1)
+    # test_sampler = SamplerForPosePrediction(np.array(testset.data['stages']), group1_ratio=0.1)
 
     train_dataloader = DataLoader(
         trainset,
         batch_size=cfg.batch_size,
-        shuffle=False,
-        sampler=train_sampler,
+        shuffle=True,
+        # sampler=train_sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
@@ -203,8 +204,8 @@ def finetune(cfg: FinetuneConfig) -> None:
     test_dataloader = DataLoader(
         testset,
         batch_size=cfg.batch_size,
-        shuffle=False,
-        sampler=test_sampler,
+        shuffle=True,
+        # sampler=test_sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
@@ -214,8 +215,9 @@ def finetune(cfg: FinetuneConfig) -> None:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{exp_id}")
 
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate,weight_decay=cfg.weight_decay)
-    # scheduler = StepLR(optimizer, step_size=5, gamma=0.9)
-    # scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0.1 * len(train_dataloader) * cfg.episode, num_training_steps=len(train_dataloader) * cfg.episode)
+    if cfg.schedular:
+        # scheduler = StepLR(optimizer, step_size=5, gamma=0.9)
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0.1 * len(train_dataloader) * cfg.episode, num_training_steps=len(train_dataloader) * cfg.episode)
     scaler = torch.cuda.amp.GradScaler()
 
     train_running_loss = runningLoss()
@@ -243,8 +245,10 @@ def finetune(cfg: FinetuneConfig) -> None:
                     loss_dict = action_tokenizer.get_loss(output, batch, output_start_idx)
                     normalized_loss_dict = train_running_loss.update(loss_dict = loss_dict)
 
-                # train_loss = normalized_loss_dict['total_loss']/cfg.grad_accumulation_steps
-                train_loss = loss_dict['nll_loss']/cfg.grad_accumulation_steps
+                if cfg.train_loss == "nll":
+                    train_loss = loss_dict['nll_loss']/cfg.grad_accumulation_steps
+                elif cfg.train_loss == "weighted":
+                    train_loss = normalized_loss_dict['total_loss']/cfg.grad_accumulation_steps
                 scaler.scale(train_loss).backward()
                 
                 # Push Metrics to W&B (every 10 steps)
@@ -267,9 +271,9 @@ def finetune(cfg: FinetuneConfig) -> None:
 
                     test_loss_dict = {
                         "nll_loss": [],
-                        "gripper_position_loss": [],
-                        "gripper_orientation_loss": [],
-                        "gripper_open_loss": [],
+                        # "gripper_position_loss": [],
+                        # "gripper_orientation_loss": [],
+                        # "gripper_open_loss": [],
                         "item_loss": [],
                         "object_position_loss": [],
                         "target_position_loss": [],
@@ -286,7 +290,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                                 pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
                                 labels=batch["labels"],
                             )
-
 
                             output_start_idx = vla.vision_backbone.featurizer.patch_embed.num_patches
                             loss_dict = action_tokenizer.get_loss(output, batch, output_start_idx)
@@ -319,7 +322,8 @@ def finetune(cfg: FinetuneConfig) -> None:
 
                     # Block on Main Process Checkpointing
                     # dist.barrier()
-                # scheduler.step()
+                if cfg.schedular:
+                    scheduler.step()
                 progress.update()
             
 if __name__ == "__main__":
