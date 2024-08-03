@@ -224,7 +224,7 @@ def process_variation(i, total_episodes,save_root, manager_dict, lock):
                 local_test_stages += stages
                 local_test_actions += actions
         except Exception as e:
-            print(e)
+            # print(e)
             print(f"variation{i}, epoisode{j} failed")
             continue
             
