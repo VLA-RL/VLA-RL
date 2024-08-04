@@ -191,13 +191,14 @@ class runningLoss:
         }
 
         normalized_loss.update({'total_loss': 
-            0.5*normalized_loss['nll_loss'] + 
+            0.4*normalized_loss['nll_loss'] + 
             # 0.05*normalized_loss['gripper_position_loss'] + 0.05*normalized_loss['gripper_orientation_loss'] + 0.05*normalized_loss['gripper_open_loss'] +
-              0.05*normalized_loss['item_loss'] +
-                0.1*normalized_loss['object_position_loss'] +
+            #   0.05*normalized_loss['item_loss'] +
+                0.2*normalized_loss['object_position_loss'] +
                 #   0.1*normalized_loss['target_position_loss'] +
-                    0.1*normalized_loss['stage_loss'] +
-                      0.1*normalized_loss['action_position_loss'] + 0.1*normalized_loss['action_orientation_loss'] + 0.05*normalized_loss['action_open_loss']})
+                    # 0.1*normalized_loss['stage_loss'] +
+                      0.2*normalized_loss['action_position_loss'] + 0.2*normalized_loss['action_orientation_loss'] #+ 0.05*normalized_loss['action_open_loss']
+                      })
         return normalized_loss
 
 class AngleLoss(nn.Module):

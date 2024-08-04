@@ -154,7 +154,9 @@ class RLbenchCotDataset(Dataset):
         obj_idx = (input_ids == 32008).to(torch.int).argmax().item()
         labels[obj_idx+1:obj_idx+4] = IGNORE_INDEX
 
-        
+        action_idx = (input_ids == 32014).to(torch.int).argmax().item()
+        labels[action_idx+1:action_idx+7] = IGNORE_INDEX
+
 
         data = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, 
                     grippers = torch.tensor(gripper), items = torch.tensor(item), objects = torch.tensor(object_),

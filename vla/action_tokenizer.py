@@ -135,7 +135,8 @@ class RLbenchPoseTokenizer:
         pred_action = torch.cat([x_pred, y_pred, z_pred, rx_pred, ry_pred, rz_pred, gripper_pred], dim = 1).to(device)
         return pred_action
     
-    def get_action(self, logits: torch.tensor) -> np.ndarray: 
+    def get_action(self, logits: torch.tensor, temperature: float = 1, deterministic: bool = False) -> np.ndarray: 
+        logits = logits/temperature
         grip_bin_centers = np.array([0,1])
         x_score = F.softmax(logits[:, 0:1, :100], dim = -1).squeeze(0).squeeze(0)
         y_score = F.softmax(logits[:, 1:2, 100:200], dim = -1).squeeze(0).squeeze(0)
@@ -146,17 +147,28 @@ class RLbenchPoseTokenizer:
         rz_score = F.softmax(logits[:, 5:6, 500:600], dim = -1).squeeze(0).squeeze(0)
         gripper_score = F.softmax(logits[:, 6:7, 600:], dim = -1).squeeze(0).squeeze(0)
 
-        #sample
-        x_pred = self.x_bin_centers[x_score.multinomial(1).item()]
-        y_pred = self.y_bin_centers[y_score.multinomial(1).item()]
-        z_pred = self.z_bin_centers[z_score.multinomial(1).item()]
+        if deterministic:
+            x_pred = self.x_bin_centers[x_score.argmax().item()]
+            y_pred = self.y_bin_centers[y_score.argmax().item()]
+            z_pred = self.z_bin_centers[z_score.argmax().item()]
 
-        rx_pred = self.rx_bin_centers[rx_score.multinomial(1).item()]
+            rx_pred = self.rx_bin_centers[rx_score.argmax().item()]
+            
+            ry_pred = self.ry_bin_centers[ry_score.argmax().item()]
+            rz_pred = self.rz_bin_centers[rz_score.argmax().item()]
+            gripper_pred = grip_bin_centers[gripper_score.argmax().item()]
+        else:
+            #sample
+            x_pred = self.x_bin_centers[x_score.multinomial(1).item()]
+            y_pred = self.y_bin_centers[y_score.multinomial(1).item()]
+            z_pred = self.z_bin_centers[z_score.multinomial(1).item()]
+
+            rx_pred = self.rx_bin_centers[rx_score.multinomial(1).item()]
+            ry_pred = self.ry_bin_centers[ry_score.multinomial(1).item()]
+            rz_pred = self.rz_bin_centers[rz_score.multinomial(1).item()]
+            gripper_pred = grip_bin_centers[gripper_score.multinomial(1).item()]
+
         rx_pred = rx_pred - np.pi if rx_pred > 0 else rx_pred + np.pi
-        ry_pred = self.ry_bin_centers[ry_score.multinomial(1).item()]
-        rz_pred = self.rz_bin_centers[rz_score.multinomial(1).item()]
-        gripper_pred = grip_bin_centers[gripper_score.multinomial(1).item()]
-
         pred_action = np.array([x_pred, y_pred, z_pred, rx_pred, ry_pred, rz_pred, gripper_pred])
         return pred_action
 
@@ -192,7 +204,7 @@ class RLbenchPoseTokenizer:
         output_logits = output.logits[:, output_start_idx:-1]
         device_id = output_logits.device
         batch_size = output_logits.size(0)
-        output_gt = batch["labels"][:, 1:].to(device_id)
+        output_gt = batch["input_ids"][:, 1:].to(device_id)
         gripper_mask, item_mask, object_mask, target_mask, stage_mask, action_mask = self.get_mask(output_gt)
 
         # gripper_logits = output_logits[gripper_mask][:,self.action_token_begin_idx:self.tokenizer.vocab_size].view(batch_size,-1,self.n_bins)
@@ -256,7 +268,20 @@ class RLbenchPoseTokenizer:
             'action_orientation_loss': action_orientation_loss,
             'action_open_loss': action_open_loss
         }
-        return loss_dict
+        
+        eps = 1e-8
+        alignment_weight = 1/(nll_loss + eps)
+        object_position_weight = 1/(object_position_loss + eps)
+        action_position_weight = 1/(action_position_loss + eps)
+        action_orientation_weight = 1/(action_orientation_loss + eps)
+        total_weight = alignment_weight + object_position_weight + action_position_weight + action_orientation_weight
+        alignment_weight = alignment_weight/total_weight
+        object_position_weight = object_position_weight/total_weight
+        action_position_weight = action_position_weight/total_weight
+        action_orientation_weight = action_orientation_weight/total_weight
+        
+        weighted_loss = alignment_weight*nll_loss + object_position_weight*object_position_loss + action_position_weight*action_position_loss + action_orientation_weight*action_orientation_loss 
+        return loss_dict, weighted_loss
 
     # def get_loss(self, action_logits: torch.tensor, gt_action: torch.tensor, gripper_logits: torch.tensor, gt_gripper: torch.tensor,
     #              object_logits: torch.tensor, gt_object: torch.tensor, target_logits: torch.tensor, gt_target: torch.tensor, soft: bool = False):

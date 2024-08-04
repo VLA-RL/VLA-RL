@@ -57,7 +57,8 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "2_sample_data_q"
+    # experiment_name: str = "2_sample_data_q"
+    experiment_name: str = "dynamic_weighted_loss"
     dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
     train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
@@ -73,13 +74,13 @@ class FinetuneConfig:
     seed: int = 42                                                  # Random seed
     episode: int = 1
     batch_size: int = 2#16                                            # Fine-tuning batch size
-    test_limit_length: int = 15                                      # Number of test batches to evaluate
-    save_steps: int = 20#5000                                          # Interval for checkpoint saving
-    learning_rate: float = 1e-4                                     # Fine-tuning learning rate
-    weight_decay: float = 0.01                                      # Fine-tuning weight decay
+    test_limit_length: int = 10                                      # Number of test batches to evaluate
+    save_steps: int = 40#5000                                          # Interval for checkpoint saving
+    learning_rate: float = 5e-4                                     # Fine-tuning learning rate
+    weight_decay: float = 0.0                                      # Fine-tuning weight decay
     grad_accumulation_steps: int = 4                                # Gradient accumulation steps
-    train_loss: str = "nll"                                         # Loss to optimize during fine-tuning
-    schedular : bool = False
+    train_loss: str = "weighted"                                         # Loss to optimize during fine-tuning
+    schedular : bool = True
 
     # LoRA Arguments
     use_lora: bool = True                                           # Whether to use LoRA fine-tuning
@@ -242,7 +243,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                     )
 
                     output_start_idx = vla.vision_backbone.featurizer.patch_embed.num_patches
-                    loss_dict = action_tokenizer.get_loss(output, batch, output_start_idx)
+                    loss_dict, weighted_loss = action_tokenizer.get_loss(output, batch, output_start_idx)
                     normalized_loss_dict = train_running_loss.update(loss_dict = loss_dict)
 
                 if cfg.train_loss == "nll":
@@ -292,7 +293,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                             )
 
                             output_start_idx = vla.vision_backbone.featurizer.patch_embed.num_patches
-                            loss_dict = action_tokenizer.get_loss(output, batch, output_start_idx)
+                            loss_dict, weighted_loss = action_tokenizer.get_loss(output, batch, output_start_idx)
                             for k, v in loss_dict.items():
                                 test_loss_dict[k].append(v)
 
