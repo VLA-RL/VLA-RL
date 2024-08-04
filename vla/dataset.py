@@ -119,9 +119,10 @@ class RLbenchCotDataset(Dataset):
         # prompt_chat = "You are an assistant helping to control a robotic manipulator. The robot performs tasks by following a series of steps to interact with objects in its environment. The environment includes items like soup cans and baskets, and the robot uses a gripper to pick up and move these items.\n\nInstructions format:\n- 'USER': Describes the task to be performed.\n- 'ASSISTANT': Provides a detailed step-by-step plan for the robot to execute the task.\n\nThe 'ASSISTANT' response includes:\n1. A logical step-by-step plan for the task.\n2. The current positions of relevant objects and the gripper.\n3. The current state of the gripper (whether it has grasped the object or not).\n4. The next key pose of the gripper to achieve the task.\n\nExample:\n\nUSER: What action should the robot take to pick up the soup and place it in the basket?\nASSISTANT: Let's think step by step. The plan is to move the gripper to the soup and pick it up, then move over the basket, and then place the soup in the basket. The soup is located at <object>ĉ‖호 </object>. The basket is located at <target>Ζ‖ご </target>. The gripper pose is <gripper>阳‖素군雅导弘 </gripper>. The gripper hasn't grasped the soup. So the current step is to move the gripper to the soup and pick it up. The next key pose of the gripper is <action>机‖素秀麻방弘 </action>. \n <current conversation> USER: What is the next key pose of the gripper should the robot take to {instruction}? ASSISTANT: Let's think step by step, {cot}</s>"
         # prompt_instruct = "In: You are an assistant helping to control a robotic manipulator. The robot performs tasks by following a series of steps to interact with objects in its environment."
 
-        prompt = """In: What the next key pose of gripper should the robot take to {instruction}? Current pose is <g>{gripper} </g>, let's think step by step.
-        Out: <item_{item}>, <o>{object_} </o>, <t>{target} </t>, <stage_{stage}>, <a>{action} </a></s>
-        """
+        prompt = (
+            "In: What should be the next key pose of the gripper to {instruction}? The current gripper pose is <g>{gripper} </g>.\n "
+            "Out: <cot> <item_{item}>, <o>{object_} </o>, <t>{target} </t>, <stage_{stage}>, <a>{action} </a>, <q><PAD></s>"
+        )
 
         prompt = prompt.format(
             instruction = instruction,
@@ -144,8 +145,16 @@ class RLbenchCotDataset(Dataset):
         pixel_values = self.image_transform(image)
 
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
-        out_idx = (input_ids == 4451).to(torch.int).argmax().item()
-        labels[:out_idx] = IGNORE_INDEX
+        cot_idx = (input_ids == 32017).to(torch.int).argmax().item()
+        labels[:cot_idx+1] = IGNORE_INDEX
+
+        q_idx = (input_ids == 32016).to(torch.int).argmax().item()
+        labels[q_idx+1] = IGNORE_INDEX
+
+        obj_idx = (input_ids == 32008).to(torch.int).argmax().item()
+        labels[obj_idx+1:obj_idx+4] = IGNORE_INDEX
+
+        
 
         data = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, 
                     grippers = torch.tensor(gripper), items = torch.tensor(item), objects = torch.tensor(object_),

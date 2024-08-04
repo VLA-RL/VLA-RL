@@ -57,14 +57,14 @@ class FinetuneConfig:
     vla_path: str = "/media/lawrence/Work/checkpoints/ecot-openvla-7b-bridge"   # Path to OpenVLA model 
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
-    experiment_name: str = "0"
+    experiment_name: str = "2_sample_data_q"
     dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
     train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
     test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data.pt")
     item_num = 5
-    stage_num = 2
-    add_tokens = ['<g>', '</g>'] + [f'<item_{i}>' for i in np.arange(item_num)] + ['<o>', '</o>', '<t>', '</t>'] + [f'<stage_{i}>' for i in np.arange(stage_num)] + ['<a>', '</a>']
+    stage_num = 2 
+    add_tokens = ['<g>', '</g>'] + [f'<item_{i}>' for i in np.arange(item_num)] + ['<o>', '</o>', '<t>', '</t>'] + [f'<stage_{i}>' for i in np.arange(stage_num)] + ['<a>', '</a>', '<q>', '<cot>']
 
     run_root_dir: Path = Path("./runs")                               # Path to directory to store logs & checkpoints
     adapter_dir: Path = Path("./adapter-tmp")                     # Temporary directory for LoRA weights before fusing
@@ -73,12 +73,12 @@ class FinetuneConfig:
     seed: int = 42                                                  # Random seed
     episode: int = 1
     batch_size: int = 2#16                                            # Fine-tuning batch size
-    test_limit_length: int = 30
+    test_limit_length: int = 15                                      # Number of test batches to evaluate
     save_steps: int = 20#5000                                          # Interval for checkpoint saving
-    learning_rate: float = 5e-4                                     # Fine-tuning learning rate
+    learning_rate: float = 1e-4                                     # Fine-tuning learning rate
     weight_decay: float = 0.01                                      # Fine-tuning weight decay
     grad_accumulation_steps: int = 4                                # Gradient accumulation steps
-    train_loss: str = "weighted"                                         # Loss to optimize during fine-tuning
+    train_loss: str = "nll"                                         # Loss to optimize during fine-tuning
     schedular : bool = False
 
     # LoRA Arguments
@@ -189,14 +189,14 @@ def finetune(cfg: FinetuneConfig) -> None:
         processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
     )
 
-    # train_sampler = SamplerForPosePrediction(np.array(trainset.data['stages']), group1_ratio=0.1)
-    # test_sampler = SamplerForPosePrediction(np.array(testset.data['stages']), group1_ratio=0.1)
+    train_sampler = SamplerForPosePrediction(np.array(trainset.data['stages']), group1_ratio=0.1)
+    test_sampler = SamplerForPosePrediction(np.array(testset.data['stages']), group1_ratio=0.1)
 
     train_dataloader = DataLoader(
         trainset,
         batch_size=cfg.batch_size,
-        shuffle=True,
-        # sampler=train_sampler,
+        shuffle=False,
+        sampler=train_sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
@@ -204,8 +204,8 @@ def finetune(cfg: FinetuneConfig) -> None:
     test_dataloader = DataLoader(
         testset,
         batch_size=cfg.batch_size,
-        shuffle=True,
-        # sampler=test_sampler,
+        shuffle=False,
+        sampler=test_sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )

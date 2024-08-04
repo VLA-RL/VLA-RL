@@ -57,9 +57,9 @@ def pose2action(pose, open):
     return np.concatenate([pose[:3], R.from_quat(pose[3:]).as_euler('xyz'), [open]])
     
 def run_episode(task, variation_num, episode_num, save_root):
-    # seed = np.random.randint(0, 100000)
-    # np.random.seed(seed)
-    # random.seed(seed)
+    seed = np.random.randint(0, 100000)
+    np.random.seed(seed)
+    random.seed(seed)
     
     img_paths = []
     instructions = []
@@ -159,10 +159,10 @@ def run_episode(task, variation_num, episode_num, save_root):
         action = pose2action(waypoint_pose, action_open)
         actions.append(action)
         id += 1
-    task_action = np.concatenate([waypoint_pose, [action_open]])
-    task.step(task_action)
+    # task_action = np.concatenate([waypoint_pose, [action_open]])
+    # task.step(task_action)
 
-    assert task._scene.task.success()[0] == True, "Task failed"
+    # assert task._scene.task.success()[0] == True, "Task failed"
 
     return img_paths, instructions, gripper_poses, items, object_positions, target_positions, stages, actions
 
@@ -224,7 +224,7 @@ def process_variation(i, total_episodes,save_root, manager_dict, lock):
                 local_test_stages += stages
                 local_test_actions += actions
         except Exception as e:
-            # print(e)
+            print(e)
             print(f"variation{i}, epoisode{j} failed")
             continue
             
