@@ -270,17 +270,17 @@ class RLbenchPoseTokenizer:
         }
         
         eps = 1e-8
-        alignment_weight = 1/(nll_loss + eps)
-        object_position_weight = 1/(object_position_loss + eps)
-        action_position_weight = 1/(action_position_loss + eps)
-        action_orientation_weight = 1/(action_orientation_loss + eps)
-        total_weight = alignment_weight + object_position_weight + action_position_weight + action_orientation_weight
-        alignment_weight = alignment_weight/total_weight
-        object_position_weight = object_position_weight/total_weight
-        action_position_weight = action_position_weight/total_weight
-        action_orientation_weight = action_orientation_weight/total_weight
+        alignment_loss = nll_loss/0.5
+        object_position_loss = object_position_loss/0.04
+        action_position_loss = action_position_loss/0.02
+        action_orientation_loss = action_orientation_loss/0.3
+        total_loss = alignment_loss + object_position_loss + action_position_loss + action_orientation_loss
+        alignment_weight = alignment_loss/total_loss
+        object_position_weight = object_position_loss/total_loss
+        action_position_weight = action_position_loss/total_loss
+        action_orientation_weight = action_orientation_loss/total_loss
         
-        weighted_loss = alignment_weight*nll_loss + object_position_weight*object_position_loss + action_position_weight*action_position_loss + action_orientation_weight*action_orientation_loss 
+        weighted_loss = alignment_weight*alignment_loss + object_position_weight*object_position_loss + action_position_weight*action_position_loss + action_orientation_weight*action_orientation_loss 
         return loss_dict, weighted_loss
 
     # def get_loss(self, action_logits: torch.tensor, gt_action: torch.tensor, gripper_logits: torch.tensor, gt_gripper: torch.tensor,

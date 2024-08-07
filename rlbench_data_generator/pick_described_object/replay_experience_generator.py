@@ -38,6 +38,8 @@ def run_episode(task, variation_num, episode_num, save_root):
     np.random.seed(seed)
     random.seed(seed)
     
+    first_time = True
+
     img_paths = []
     instructions = []
     gripper_poses = []
@@ -55,64 +57,157 @@ def run_episode(task, variation_num, episode_num, save_root):
     task.set_variation(variation_num)
     save_dir = save_root + f"variation_{variation_num}/episode_{episode_num}/"
     check_and_make(save_dir)
-    desc, _ = task.reset()
-    
-    #stage 0
-    stage = 0
-    # task._task.randomize_pose(True)
-    img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
+    for _ in range(2):
+        desc, _ = task.reset()
+        x = 1
+        y = 1
+        first_step = True
+        for _ in range(x):
+            #stage 0
+            stage = 0
+            img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
+            img_path = save_dir+f"{id}.jpg"
+            img.save(img_path)
+            img_paths.append(img_path)
 
-    waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
-    img_path = save_dir+f"{id}.jpg"
-    img.save(img_path)
-    img_paths.append(img_path)
-    instructions.append(random.sample(desc,1)[0])
-    gripper = pose2action(gripper_pose, gripper_open)
-    gripper_poses.append(gripper)
-    items.append(variation_num)
-    object_positions.append(object_pos)
-    target_positions.append(target_pos)
-    stages.append(stage)
-    action = pose2action(waypoint_pose,0)
-    actions.append(action)
+            instructions.append(random.sample(desc,1)[0])
+            gripper = pose2action(gripper_pose, gripper_open)
+            gripper_poses.append(gripper)
+            if not first_step:
+                next_img_paths.append(img_path)
+            first_step = False
+            items.append(variation_num)
+            object_positions.append(object_pos)
+            target_positions.append(target_pos)
+            stages.append(stage)
 
-    task_action = np.concatenate([waypoint_pose, [0]])
-    obs, reward, done = task.step(task_action)
-    rewards.append(reward)
-    dones.append(done)
-    id+= 1
+            waypoint_pose = task._task.randomize_pose(True, set_pose=False, initial = False)
+            action = pose2action(waypoint_pose, 0)
+            actions.append(action)
+            next_gripper_poses.append(action)
+            task_action = np.concatenate([waypoint_pose, [0]])
+            obs, reward, done = task.step(task_action)
+            rewards.append(reward)
+            dones.append(done)
+            id+= 1
 
+        #stage 0
+        stage = 0
+        # task._task.randomize_pose(True)
+        img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
+        waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
+        img_path = save_dir+f"{id}.jpg"
+        img.save(img_path)
+        img_paths.append(img_path)
+        instructions.append(random.sample(desc,1)[0])
+        gripper = pose2action(gripper_pose, gripper_open)
+        gripper_poses.append(gripper)
+        next_img_paths.append(img_path)
+        items.append(variation_num)
+        object_positions.append(object_pos)
+        target_positions.append(target_pos)
+        stages.append(stage)
+        action = pose2action(waypoint_pose,0)
+        actions.append(action)
+        next_gripper_poses.append(action)
 
-    
-    #stage 1
-    stage = 1
-    img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
-    waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
-    img_path = save_dir+f"{id}.jpg"
-    img.save(img_path)
-    img_paths.append(img_path)
-    next_img_paths.append(img_path)
-    instructions.append(random.sample(desc,1)[0])
-    gripper = pose2action(gripper_pose, gripper_open)
-    gripper_poses.append(gripper)
-    next_gripper_poses.append(gripper)
-    items.append(variation_num)
-    object_positions.append(object_pos)
-    target_positions.append(target_pos)
-    stages.append(stage)
-    action_open = 1
-    action = pose2action(waypoint_pose, action_open)
-    actions.append(action)
-    id += 1 
-    
-    task_action = np.concatenate([waypoint_pose, [action_open]])
-    obs, reward, done = task.step(task_action)
-    rewards.append(reward)
-    dones.append(done)
+        task_action = np.concatenate([waypoint_pose, [0]])
+        obs, reward, done = task.step(task_action)
+        rewards.append(reward)
+        dones.append(done)
+        id+= 1
+        
+        if first_time:
+            #stage 1
+            stage = 1
+            img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
+            waypoint_pose = task._task.randomize_pose(True, set_pose=False, initial = False)
+            img_path = save_dir+f"{id}.jpg"
+            img.save(img_path)
+            img_paths.append(img_path)
+            next_img_paths.append(img_path)
+            instructions.append(random.sample(desc,1)[0])
+            gripper = pose2action(gripper_pose, gripper_open)
+            gripper_poses.append(gripper)
+            items.append(variation_num)
+            object_positions.append(object_pos)
+            target_positions.append(target_pos)
+            stages.append(stage)
+            action_open = 1
+            action = pose2action(waypoint_pose, action_open)
+            actions.append(action)
+            next_gripper_poses.append(action)   
+            id += 1 
+            
+            task_action = np.concatenate([waypoint_pose, [action_open]])
+            obs, reward, done = task.step(task_action)
+            rewards.append(reward)
+            dones.append(done)
+            img = Image.fromarray(obs.front_rgb,'RGB')
+            img_path = save_dir+f"{id}.jpg"
+            img.save(img_path)
+            next_img_paths.append(img_path)
+            id += 1 
+            first_time = False
 
-    next_img_paths.append(None)
-    next_gripper_poses.append(None)
-    assert task._scene.task.success()[0] == True, "Task failed"
+            continue
+        else:
+            for _ in range(y):
+                #stage 1
+                stage = 1
+                img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
+                waypoint_pose = task._task.randomize_pose(True, set_pose=False, initial = False)
+                img_path = save_dir+f"{id}.jpg"
+                img.save(img_path)
+                img_paths.append(img_path)
+                next_img_paths.append(img_path)
+                instructions.append(random.sample(desc,1)[0])
+                gripper = pose2action(gripper_pose, gripper_open)
+                gripper_poses.append(gripper)
+                items.append(variation_num)
+                object_positions.append(object_pos)
+                target_positions.append(target_pos)
+                stages.append(stage)
+                action_open = 0
+                action = pose2action(waypoint_pose, action_open)
+                actions.append(action)
+                next_gripper_poses.append(action)
+                id += 1 
+                
+                task_action = np.concatenate([waypoint_pose, [action_open]])
+                obs, reward, done = task.step(task_action)
+                rewards.append(reward)
+                dones.append(done)
+
+            #stage 1
+            stage = 1
+            img, gripper_pose, gripper_open, object_pos, target_pos = get_data(task, variation_num)
+            waypoint_pose = task._task.get_waypoints()[stage].get_waypoint_object().get_pose()
+            img_path = save_dir+f"{id}.jpg"
+            img.save(img_path)
+            img_paths.append(img_path)
+            next_img_paths.append(img_path)
+            instructions.append(random.sample(desc,1)[0])
+            gripper = pose2action(gripper_pose, gripper_open)
+            gripper_poses.append(gripper)
+            items.append(variation_num)
+            object_positions.append(object_pos)
+            target_positions.append(target_pos)
+            stages.append(stage)
+            action_open = 1
+            action = pose2action(waypoint_pose, action_open)
+            actions.append(action)
+            next_gripper_poses.append(action)
+            id += 1 
+            
+            task_action = np.concatenate([waypoint_pose, [action_open]])
+            obs, reward, done = task.step(task_action)
+            rewards.append(reward)
+            dones.append(done)
+
+            next_img_paths.append(None)
+            assert task._scene.task.success()[0] == True, "Task failed"
+
 
     return img_paths, instructions, gripper_poses, items, object_positions, target_positions, stages, actions, rewards, dones, next_img_paths, next_gripper_poses
 
@@ -138,6 +233,7 @@ def process_variation(i, total_episodes,save_root, manager_dict, lock):
         action_mode=MoveArmThenGripper(
             arm_action_mode=EndEffectorPoseViaPlanning(absolute_mode=True, collision_checking=True), gripper_action_mode=Discrete()),
         obs_config=obs_config,
+        shaped_rewards= True,
         headless=True)
     env.launch()
     task = env.get_task(PickDescribedObject)
@@ -186,7 +282,7 @@ def process_variation(i, total_episodes,save_root, manager_dict, lock):
     env.shutdown()
 
 def main():
-    save_root = './datasets/pick_described_object_replay/'
+    save_root = './datasets/pick_described_object_replay1/'
     check_and_make(save_root)
     manager = Manager()
     lock = manager.Lock()
@@ -207,7 +303,7 @@ def main():
         'train_next_grippers': []
     })
 
-    total_episodes = 100
+    total_episodes = 50
     processes = []
     for i in range(5):
         p = multiprocessing.Process(target=process_variation, args=(i,total_episodes,save_root, manager_dict, lock))

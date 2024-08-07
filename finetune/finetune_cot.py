@@ -37,7 +37,7 @@ from accelerate import PartialState
 from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from torch.optim.lr_scheduler import StepLR
@@ -51,6 +51,7 @@ import numpy as np
 import torch.nn.functional as F
 
 
+
 @dataclass
 class FinetuneConfig:
     # fmt: off
@@ -58,11 +59,11 @@ class FinetuneConfig:
     vla_path_q: str = "/media/lawrence/Work/checkpoints/openvla-cot-4b"   # Path to OpenVLA model
 
     # experiment_name: str = "2_sample_data_q"
-    experiment_name: str = "dynamic_weighted_loss"
-    dataset_name: str = "pick_described_object"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+    experiment_name: str = "nosie_data_dynamic_weight"
+    dataset_name: str = "pick_described_object_replay1"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     # data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
-    train_data_path: Path = Path(f"./datasets/{dataset_name}/train_data.pt")
-    test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data.pt")
+    train_data_path: Path = Path(f"./datasets/{dataset_name}/data.pt")
+    # test_data_path: Path = Path(f"./datasets/{dataset_name}/test_data.pt")
     item_num = 5
     stage_num = 2 
     add_tokens = ['<g>', '</g>'] + [f'<item_{i}>' for i in np.arange(item_num)] + ['<o>', '</o>', '<t>', '</t>'] + [f'<stage_{i}>' for i in np.arange(stage_num)] + ['<a>', '</a>', '<q>', '<cot>']
@@ -88,7 +89,7 @@ class FinetuneConfig:
     lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
     use_quantization: bool = True                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
-    dataset_statistics: tuple = (np.array([-0.2, -0.35,  0.75199986, -np.pi/2, -np.pi/2, -np.pi/2,  0. ]), np.array([0.5, 0.35, 1.3, np.pi/2, 0, np.pi/2, 1.])) # Min-Max normalization statistics
+    dataset_statistics: tuple = (np.array([-0.2, -0.35,  0.75199986, -np.pi/2, 0, -np.pi/2,  0. ]), np.array([0.5, 0.35, 1.3, np.pi/2, np.pi/2, np.pi/2, 1.])) # Min-Max normalization statistics
 
     # Tracking Parameters
     wandb_project: str = "vla-rl"                                  # Name of W&B project to log to (use default!)
@@ -178,35 +179,33 @@ def finetune(cfg: FinetuneConfig) -> None:
         image_transform=processor.image_processor.apply_transform,
     )
 
-    testset = RLbenchCotDataset(
-        cfg.test_data_path,
-        action_tokenizer,
-        processor.tokenizer,
-        image_transform=processor.image_processor.apply_transform,
-    )
+    train_size = int(0.9 * len(trainset))
+    test_size = len(trainset) - train_size
+    train_dataset, test_dataset = random_split(trainset, [train_size, test_size])
+
 
     # Create Collator and DataLoader
     collator = PaddedCollatorForPosePrediction(
         processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
     )
 
-    train_sampler = SamplerForPosePrediction(np.array(trainset.data['stages']), group1_ratio=0.1)
-    test_sampler = SamplerForPosePrediction(np.array(testset.data['stages']), group1_ratio=0.1)
+    # sampler = SamplerForPosePrediction(np.array(trainset.data['stages']), group1_ratio=0.3)
+    # test_sampler = SamplerForPosePrediction(np.array(test_dataset.data['stages']), group1_ratio=0.3)
 
     train_dataloader = DataLoader(
-        trainset,
+        train_dataset,
         batch_size=cfg.batch_size,
         shuffle=False,
-        sampler=train_sampler,
+        # sampler=sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
 
     test_dataloader = DataLoader(
-        testset,
+        test_dataset,
         batch_size=cfg.batch_size,
         shuffle=False,
-        sampler=test_sampler,
+        # sampler=sampler,
         collate_fn=collator,
         num_workers=1,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
@@ -249,12 +248,15 @@ def finetune(cfg: FinetuneConfig) -> None:
                 if cfg.train_loss == "nll":
                     train_loss = loss_dict['nll_loss']/cfg.grad_accumulation_steps
                 elif cfg.train_loss == "weighted":
-                    train_loss = normalized_loss_dict['total_loss']/cfg.grad_accumulation_steps
+                    train_loss = weighted_loss/cfg.grad_accumulation_steps
                 scaler.scale(train_loss).backward()
                 
                 # Push Metrics to W&B (every 10 steps)
                 if distributed_state.is_main_process and total_step % 10 == 0:
                     log_dict = {f"train/{k}": v for k, v in loss_dict.items()}
+                    log_dict.update({
+                        "train/weighted_loss":weighted_loss,
+                    })
                     wandb.log(log_dict,
                         step = total_step
                     )
